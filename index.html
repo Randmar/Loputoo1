@@ -30,6 +30,7 @@
     .kvd div { padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .kvd .k { color:#666; font-size: 13px; }
     .hide { display:none !important; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
 
@@ -45,28 +46,35 @@
         <div class="muted" id="userText" style="font-size:12px;"></div>
       </div>
       <div class="btnrow">
-        <button id="openLogin" class="light" type="button">Admin login</button>
+        <button id="openLogin" class="light" type="button"
+          onclick="document.getElementById('loginBox').classList.remove('hide')">
+          Admin login
+        </button>
         <button id="logoutBtn" class="light hide" type="button">Logi välja</button>
       </div>
     </div>
 
-    <!-- Login form (hidden by default) -->
+    <!-- Login form -->
     <div id="loginBox" class="hide" style="margin-top:12px;">
       <div class="row">
         <div>
           <label for="email">Email</label>
-          <input id="email" type="email" placeholder="admin@..." />
+          <input id="email" type="email" placeholder="admin@..." autocomplete="username" />
         </div>
         <div>
           <label for="password">Parool</label>
-          <input id="password" type="password" placeholder="••••••••" />
+          <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
         </div>
       </div>
       <div class="btnrow" style="margin-top:12px;">
         <button id="loginBtn" class="primary" type="button">Logi sisse</button>
-        <button id="cancelLogin" class="light" type="button">Tühista</button>
+        <button id="cancelLogin" class="light" type="button"
+          onclick="document.getElementById('loginBox').classList.add('hide')">
+          Tühista
+        </button>
       </div>
-      <p class="muted" style="margin-bottom:0;">*Admin õigused tulevad RLS poliitikatest (tabel <code>admins</code>).</p>
+      <p class="muted" id="authErr" style="margin-bottom:0; display:none;"></p>
+      <p class="muted" style="margin-bottom:0;">Admin õigused tulevad RLS poliitikatest (tabel <code>admins</code>).</p>
     </div>
   </div>
 
@@ -76,7 +84,7 @@
   <!-- Main app -->
   <div id="mainApp">
 
-    <!-- ADMIN: add form (hidden for visitors) -->
+    <!-- ADMIN: add form -->
     <div id="adminAddCard" class="card hide">
       <h2>Lisa ese (admin)</h2>
       <form id="itemForm">
@@ -157,19 +165,17 @@
   </div>
 
   <script>
-    // Pane oma päris väärtused siia (nagu sul juba olid)
-    const SUPABASE_URL = "PASTE_YOURS";
-    const SUPABASE_ANON_KEY = "PASTE_YOURS";
+    // ====== CONFIG ======
+    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // UI refs
+    // ====== UI refs ======
     const roleText = document.getElementById("roleText");
     const userText = document.getElementById("userText");
-    const openLogin = document.getElementById("openLogin");
     const logoutBtn = document.getElementById("logoutBtn");
-    const loginBox = document.getElementById("loginBox");
     const loginBtn = document.getElementById("loginBtn");
-    const cancelLogin = document.getElementById("cancelLogin");
+    const authErr = document.getElementById("authErr");
 
     const adminAddCard = document.getElementById("adminAddCard");
     const form = document.getElementById("itemForm");
@@ -202,7 +208,13 @@
       errEl.textContent = msg;
     }
 
-    // ===== AUTH / ADMIN CHECK =====
+    function showAuthError(msg) {
+      if (!msg) { authErr.style.display = "none"; authErr.textContent = ""; return; }
+      authErr.style.display = "block";
+      authErr.textContent = msg;
+    }
+
+    // ====== AUTH / ADMIN CHECK ======
     async function refreshRoleUI() {
       const { data: { session } } = await sb.auth.getSession();
       const user = session?.user ?? null;
@@ -211,282 +223,12 @@
         IS_ADMIN = false;
         roleText.textContent = "Külastaja";
         userText.textContent = "";
-        openLogin.classList.remove("hide");
         logoutBtn.classList.add("hide");
         adminAddCard.classList.add("hide");
         return;
       }
 
-      // check if this user is in public.admins
-      const { data, error } = await sb.from("admins").select("user_id").eq("user_id", user.id).maybeSingle();
-      IS_ADMIN = !!data && !error;
-
-      roleText.textContent = IS_ADMIN ? "Admin" : "Sisseloginud (mitte-admin)";
-      userText.textContent = user.email ? `Kasutaja: ${user.email}` : `Kasutaja ID: ${user.id}`;
-
-      openLogin.classList.add("hide");
-      logoutBtn.classList.remove("hide");
-      adminAddCard.classList.toggle("hide", !IS_ADMIN);
-    }
-
-    openLogin.addEventListener("click", () => loginBox.classList.remove("hide"));
-    cancelLogin.addEventListener("click", () => loginBox.classList.add("hide"));
-
-    loginBtn.addEventListener("click", async () => {
-      const email = document.getElementById("email").value.trim();
-      const password = document.getElementById("password").value;
-
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) return alert("Login ebaõnnestus: " + error.message);
-
-      loginBox.classList.add("hide");
-      await refreshRoleUI();
-      await renderList();
-    });
-
-    logoutBtn.addEventListener("click", async () => {
-      await sb.auth.signOut();
-      await refreshRoleUI();
-      await renderList();
-    });
-
-    sb.auth.onAuthStateChange(async () => {
-      await refreshRoleUI();
-      await renderList();
-    });
-
-    // ===== DB =====
-    async function loadItemsFromDB() {
-      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
-    }
-    async function getItemFromDB(id) {
-      const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
-      if (error) throw error;
-      return data;
-    }
-    async function addItemToDB(item) {
-      const { error } = await sb.from("items").insert([item]);
-      if (error) throw error; // RLS blokib külastaja puhul
-    }
-    async function deleteItemFromDB(id) {
-      const { error } = await sb.from("items").delete().eq("id", id);
-      if (error) throw error;
-    }
-    async function updateStatusInDB(id, newStatus) {
-      const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
-      if (error) throw error;
-    }
-
-    // ===== LIST =====
-    async function renderList() {
-      showError(null);
-      itemsBody.innerHTML = "";
-
-      const q = (search?.value ?? "").trim().toLowerCase();
-
-      let items = [];
-      try {
-        items = await loadItemsFromDB();
-      } catch (e) {
-        showError("DB viga: " + (e?.message ?? e));
-        return;
-      }
-
-      const filtered = items.filter(it =>
-        (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
-          .toLowerCase().includes(q)
-      );
-
-      if (filtered.length === 0) {
-        const tr = document.createElement("tr");
-        const td = document.createElement("td");
-        td.colSpan = 6;
-        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
-        td.style.color = "#666";
-        td.style.padding = "14px 10px";
-        tr.appendChild(td);
-        itemsBody.appendChild(tr);
-        return;
-      }
-
-      for (const it of filtered) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${escapeHtml(it.name)}</td>
-          <td>${it.qty ?? 1}</td>
-          <td>${escapeHtml(it.location || "-")}</td>
-          <td><span class="pill">${escapeHtml(it.status || "-")}</span></td>
-          <td>${escapeHtml(it.note || "-")}</td>
-          <td>
-            <div class="btnrow">
-              <button type="button" data-qr="${it.id}">QR</button>
-              <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
-              ${IS_ADMIN ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
-            </div>
-          </td>
-        `;
-        itemsBody.appendChild(tr);
-      }
-    }
-
-    // ===== DETAIL =====
-    async function renderDetail(id) {
-      showError(null);
-
-      let it = null;
-      try {
-        it = await getItemFromDB(id);
-      } catch (e) {
-        detailView.innerHTML = `
-          <h2>DB viga</h2>
-          <p class="muted">${escapeHtml(e?.message ?? String(e))}</p>
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
-        `;
-        detailView.style.display = "block";
-        mainApp.style.display = "none";
-        return;
-      }
-
-      if (!it) {
-        detailView.innerHTML = `
-          <h2>Ese ei leitud</h2>
-          <p class="muted">Selle ID-ga eset pole.</p>
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
-        `;
-        detailView.style.display = "block";
-        mainApp.style.display = "none";
-        return;
-      }
-
-      // Adminile näitame staatus dropdown + salvesta, külastajale read-only
-      detailView.innerHTML = `
-        <h2>${escapeHtml(it.name)}</h2>
-        <p class="muted">Eseme detailvaade (QR-kood suunab siia).</p>
-
-        <div class="kvd">
-          <div class="k">ID</div><div>${escapeHtml(it.id)}</div>
-          <div class="k">Kogus</div><div>${it.qty ?? 1}</div>
-          <div class="k">Asukoht</div><div>${escapeHtml(it.location || "-")}</div>
-          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status || "-")}</span></div>
-          <div class="k">Märkus</div><div>${escapeHtml(it.note || "-")}</div>
-        </div>
-
-        <div style="margin-top:12px;" class="btnrow">
-          <button type="button" data-qr="${it.id}">Näita QR</button>
-
-          ${IS_ADMIN ? `
-            <select id="detailStatus" style="max-width: 220px;">
-              <option value="Laos">Laos</option>
-              <option value="Väljas">Väljas</option>
-              <option value="Hoolduses">Hoolduses</option>
-            </select>
-            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
-          ` : ``}
-
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
-        </div>
-      `;
-
-      if (IS_ADMIN) {
-        const sel = detailView.querySelector("#detailStatus");
-        sel.value = it.status || "Laos";
-        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
-          try {
-            await updateStatusInDB(id, sel.value);
-            await renderDetail(id);
-          } catch (e) {
-            alert("Ei saanud salvestada: " + (e?.message ?? e));
-          }
-        });
-      }
-
-      detailView.style.display = "block";
-      mainApp.style.display = "none";
-    }
-
-    // ===== QR =====
-    function closeQR() {
-      document.getElementById("qrModal").style.display = "none";
-      document.getElementById("qrcode").innerHTML = "";
-      document.getElementById("qrText").textContent = "";
-    }
-    window.closeQR = closeQR;
-
-    function openQRForId(id) {
-      const url = itemUrl(id);
-      document.getElementById("qrModal").style.display = "flex";
-      document.getElementById("qrcode").innerHTML = "";
-      document.getElementById("qrText").textContent = url;
-
-      new QRCode(document.getElementById("qrcode"), { text: url, width: 220, height: 220 });
-    }
-
-    // ===== EVENTS =====
-    document.addEventListener("click", async (e) => {
-      const qrId = e.target?.dataset?.qr;
-      const delId = e.target?.dataset?.del;
-
-      if (qrId) openQRForId(qrId);
-
-      if (delId) {
-        if (!IS_ADMIN) return; // UI guard (päris guard on RLS)
-        const ok = confirm("Kustutan selle eseme?");
-        if (!ok) return;
-
-        try {
-          await deleteItemFromDB(delId);
-          const params = new URLSearchParams(location.search);
-          if (params.get("id") === delId) location.href = baseUrl();
-          else await renderList();
-        } catch (err) {
-          alert("Kustutamine ebaõnnestus: " + (err?.message ?? err));
-        }
-      }
-
-      if (e.target?.id === "qrModal") closeQR();
-    });
-
-    form?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!IS_ADMIN) return alert("Ainult admin saab lisada.");
-
-      const name = document.getElementById("name").value.trim();
-      const qty = Number(document.getElementById("qty").value);
-      const locationVal = document.getElementById("location").value.trim();
-      const statusVal = document.getElementById("status").value;
-      const noteVal = document.getElementById("note").value.trim();
-
-      try {
-        await addItemToDB({ name, qty, location: locationVal, status: statusVal, note: noteVal });
-        form.reset();
-        document.getElementById("qty").value = 1;
-        document.getElementById("status").value = "Laos";
-        await renderList();
-      } catch (err) {
-        alert("Lisamine ebaõnnestus: " + (err?.message ?? err));
-      }
-    });
-
-    search?.addEventListener("input", () => renderList());
-    refreshBtn?.addEventListener("click", () => renderList());
-
-    // ===== INIT =====
-    (async function init() {
-      await refreshRoleUI();
-
-      const params = new URLSearchParams(location.search);
-      const id = params.get("id");
-
-      if (id) {
-        await renderDetail(id);
-      } else {
-        detailView.style.display = "none";
-        mainApp.style.display = "block";
-        await renderList();
-      }
-    })();
-  </script>
-</body>
-</html>
+      // Check admin via admins table
+      const { data, error } = await sb.from("admins")
+        .select("user_id")
+        .eq("user_id",_
