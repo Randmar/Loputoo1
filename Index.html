@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="et">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inventari haldur</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 900px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin-bottom: 8px; }
+    .muted { color: #666; margin-top: 0; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
+    label { display:block; font-size: 14px; margin: 10px 0 6px; }
+    input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 10px; }
+    button { padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer; }
+    button.primary { background: #111; color: #fff; }
+    button.danger { background: #c62828; color: #fff; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .toolbar { display:flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+    th { font-size: 12px; text-transform: uppercase; color: #666; }
+    .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>Inventari haldur</h1>
+  <p class="muted">Lihtne veebipõhine nimekiri (salvestub brauserisse).</p>
+
+  <div class="card">
+    <h2>Lisa ese</h2>
+    <form id="itemForm">
+      <div class="row">
+        <div>
+          <label for="name">Nimi</label>
+          <input id="name" required placeholder="Nt. Sülearvuti" />
+        </div>
+        <div>
+          <label for="qty">Kogus</label>
+          <input id="qty" type="number" min="1" value="1" required />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="location">Asukoht</label>
+          <input id="location" placeholder="Nt. Ruum 203" />
+        </div>
+        <div>
+          <label for="status">Staatus</label>
+          <select id="status">
+            <option value="Laos">Laos</option>
+            <option value="Väljas">Väljas</option>
+            <option value="Hoolduses">Hoolduses</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="note">Märkus (valikuline)</label>
+      <input id="note" placeholder="Nt. laadija puudu" />
+
+      <div style="margin-top: 12px;">
+        <button class="primary" type="submit">Lisa nimekirja</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <h2 style="margin:0;">Nimekiri</h2>
+      <input id="search" placeholder="Otsi nime/asukohta..." style="max-width: 280px;" />
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Nimi</th>
+          <th>Kogus</th>
+          <th>Asukoht</th>
+          <th>Staatus</th>
+          <th>Märkus</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="itemsBody"></tbody>
+    </table>
+
+    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap: wrap;">
+      <button id="clearAll" class="danger" type="button">Kustuta kõik</button>
+      <button id="exportJson" type="button">Ekspordi JSON</button>
+    </div>
+
+    <pre id="exportOut" style="white-space: pre-wrap; background:#fafafa; border:1px solid #eee; padding:12px; border-radius:10px; margin-top:12px; display:none;"></pre>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "inventory_items_v1";
+
+    const form = document.getElementById("itemForm");
+    const itemsBody = document.getElementById("itemsBody");
+    const search = document.getElementById("search");
+    const clearAllBtn = document.getElementById("clearAll");
+    const exportBtn = document.getElementById("exportJson");
+    const exportOut = document.getElementById("exportOut");
+
+    function loadItems() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveItems(items) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    function uid() {
+      return "id_" + Math.random().toString(16).slice(2) + "_" + Date.now();
+    }
+
+    function render() {
+      const items = loadItems();
+      const q = search.value.trim().toLowerCase();
+
+      const filtered = items.filter(it =>
+        (it.name + " " + it.location + " " + it.status + " " + (it.note ?? ""))
+          .toLowerCase()
+          .includes(q)
+      );
+
+      itemsBody.innerHTML = "";
+
+      if (filtered.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi. Lisa esimene ese.";
+        td.style.color = "#666";
+        td.style.padding = "14px 10px";
+        tr.appendChild(td);
+        itemsBody.appendChild(tr);
+        return;
+      }
+
+      for (const it of filtered) {
+        const tr = document.createElement("tr");
+
+        tr.innerHTML = `
+          <td>${escapeHtml(it.name)}</td>
+          <td>${it.qty}</td>
+          <td>${escapeHtml(it.location || "-")}</td>
+          <td><span class="pill">${escapeHtml(it.status)}</span></td>
+          <td>${escapeHtml(it.note || "-")}</td>
+          <td><button class="danger" data-del="${it.id}">Kustuta</button></td>
+        `;
+
+        itemsBody.appendChild(tr);
+      }
+
+      // kustutamise nupud
+      itemsBody.querySelectorAll("button[data-del]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-del");
+          const itemsNow = loadItems().filter(x => x.id !== id);
+          saveItems(itemsNow);
+          render();
+        });
+      });
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, s => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[s]));
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+
+      const name = document.getElementById("name").value.trim();
+      const qty = Number(document.getElementById("qty").value);
+      const location = document.getElementById("location").value.trim();
+      const status = document.getElementById("status").value;
+      const note = document.getElementById("note").value.trim();
+
+      const items = loadItems();
+      items.unshift({
+        id: uid(),
+        name,
+        qty,
+        location,
+        status,
+        note,
+        createdAt: new Date().toISOString()
+      });
+      saveItems(items);
+
+      form.reset();
+      document.getElementById("qty").value = 1;
+      document.getElementById("status").value = "Laos";
+
+      exportOut.style.display = "none";
+      render();
+    });
+
+    search.addEventListener("input", render);
+
+    clearAllBtn.addEventListener("click", () => {
+      if (confirm("Kas oled kindel, et kustutad kõik?")) {
+        localStorage.removeItem(STORAGE_KEY);
+        exportOut.style.display = "none";
+        render();
+      }
+    });
+
+    exportBtn.addEventListener("click", () => {
+      const items = loadItems();
+      exportOut.textContent = JSON.stringify(items, null, 2);
+      exportOut.style.display = "block";
+    });
+
+    // init
+    render();
+  </script>
+</body>
+</html>
