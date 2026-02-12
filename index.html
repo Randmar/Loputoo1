@@ -67,7 +67,7 @@
         </div>
       </div>
       <div class="btnrow" style="margin-top:12px;">
-        <button id="loginBtn" class="primary" type="button">Logi sisse</button>
+        <button id="loginBtn" class="primary" type="button" onclick="doLogin()">Logi sisse</button>
         <button id="cancelLogin" class="light" type="button"
           onclick="document.getElementById('loginBox').classList.add('hide')">
           Tühista
@@ -165,6 +165,35 @@
   </div>
 
   <script>
+
+    window.doLogin = async function doLogin() {
+  try {
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    // nähtav kontroll, et klikk töötab
+    alert("Proovin sisse logida: " + email);
+
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      alert("Login ebaõnnestus: " + error.message);
+      return;
+    }
+
+    alert("Login OK!");
+    // uuenda rolli ja listi
+    if (typeof refreshRoleUI === "function") await refreshRoleUI();
+    if (typeof renderList === "function") await renderList();
+
+    // sulge login box
+    const lb = document.getElementById("loginBox");
+    if (lb) lb.classList.add("hide");
+  } catch (e) {
+    alert("Login crash: " + (e?.message ?? e));
+  }
+};
+
     // ====== CONFIG ======
     const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
