@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Inventari haldur</title>
 
-  <!-- Supabase client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- QR code library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <style>
@@ -27,24 +25,60 @@
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
     th { font-size: 12px; text-transform: uppercase; color: #666; }
     .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
-    .btnrow { display:flex; gap:8px; flex-wrap:wrap; }
+    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .kvd { display:grid; grid-template-columns: 180px 1fr; gap: 8px 14px; margin-top: 12px; }
     .kvd div { padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .kvd .k { color:#666; font-size: 13px; }
+    .hide { display:none !important; }
   </style>
 </head>
 
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">QR-koodipõhine nimekiri (salvestub Supabase andmebaasi).</p>
+  <p class="muted">Külastaja näeb listi. Admin saab muuta (Supabase Auth + RLS).</p>
 
-  <!-- Detail view (shows when ?id=... in URL) -->
+  <!-- AUTH / ROLE BAR -->
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <strong>Režiim:</strong> <span id="roleText">Külastaja</span>
+        <div class="muted" id="userText" style="font-size:12px;"></div>
+      </div>
+      <div class="btnrow">
+        <button id="openLogin" class="light" type="button">Admin login</button>
+        <button id="logoutBtn" class="light hide" type="button">Logi välja</button>
+      </div>
+    </div>
+
+    <!-- Login form (hidden by default) -->
+    <div id="loginBox" class="hide" style="margin-top:12px;">
+      <div class="row">
+        <div>
+          <label for="email">Email</label>
+          <input id="email" type="email" placeholder="admin@..." />
+        </div>
+        <div>
+          <label for="password">Parool</label>
+          <input id="password" type="password" placeholder="••••••••" />
+        </div>
+      </div>
+      <div class="btnrow" style="margin-top:12px;">
+        <button id="loginBtn" class="primary" type="button">Logi sisse</button>
+        <button id="cancelLogin" class="light" type="button">Tühista</button>
+      </div>
+      <p class="muted" style="margin-bottom:0;">*Admin õigused tulevad RLS poliitikatest (tabel <code>admins</code>).</p>
+    </div>
+  </div>
+
+  <!-- Detail view -->
   <div id="detailView" class="card" style="display:none;"></div>
 
   <!-- Main app -->
   <div id="mainApp">
-    <div class="card">
-      <h2>Lisa ese</h2>
+
+    <!-- ADMIN: add form (hidden for visitors) -->
+    <div id="adminAddCard" class="card hide">
+      <h2>Lisa ese (admin)</h2>
       <form id="itemForm">
         <div class="row">
           <div>
@@ -81,6 +115,7 @@
       </form>
     </div>
 
+    <!-- LIST -->
     <div class="card">
       <div class="toolbar">
         <h2 style="margin:0;">Nimekiri</h2>
@@ -101,7 +136,7 @@
         <tbody id="itemsBody"></tbody>
       </table>
 
-      <div style="display:flex; gap:10px; margin-top:12px; flex-wrap: wrap;">
+      <div class="btnrow" style="margin-top:12px;">
         <button id="refresh" type="button">Värskenda</button>
       </div>
 
@@ -122,12 +157,21 @@
   </div>
 
   <script>
-    // 1) PANE SIIA OMA SUPABASE ANDMED (Project Settings -> API)
-    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
-
+    // Pane oma päris väärtused siia (nagu sul juba olid)
+    const SUPABASE_URL = "PASTE_YOURS";
+    const SUPABASE_ANON_KEY = "PASTE_YOURS";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // UI refs
+    const roleText = document.getElementById("roleText");
+    const userText = document.getElementById("userText");
+    const openLogin = document.getElementById("openLogin");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const loginBox = document.getElementById("loginBox");
+    const loginBtn = document.getElementById("loginBtn");
+    const cancelLogin = document.getElementById("cancelLogin");
+
+    const adminAddCard = document.getElementById("adminAddCard");
     const form = document.getElementById("itemForm");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
@@ -137,13 +181,14 @@
     const mainApp = document.getElementById("mainApp");
     const detailView = document.getElementById("detailView");
 
+    let IS_ADMIN = false;
+
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, s => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[s]));
     }
 
-    // Base URL of this page (without query/hash), works on GitHub Pages too
     function baseUrl() {
       return location.origin + location.pathname.replace(/\/$/, "") + "/";
     }
@@ -152,56 +197,94 @@
     }
 
     function showError(msg) {
-      if (!msg) {
-        errEl.style.display = "none";
-        errEl.textContent = "";
-        return;
-      }
+      if (!msg) { errEl.style.display = "none"; errEl.textContent = ""; return; }
       errEl.style.display = "block";
       errEl.textContent = msg;
     }
 
-    async function loadItemsFromDB() {
-      const { data, error } = await sb
-        .from("items")
-        .select("*")
-        .order("created_at", { ascending: false });
+    // ===== AUTH / ADMIN CHECK =====
+    async function refreshRoleUI() {
+      const { data: { session } } = await sb.auth.getSession();
+      const user = session?.user ?? null;
 
+      if (!user) {
+        IS_ADMIN = false;
+        roleText.textContent = "Külastaja";
+        userText.textContent = "";
+        openLogin.classList.remove("hide");
+        logoutBtn.classList.add("hide");
+        adminAddCard.classList.add("hide");
+        return;
+      }
+
+      // check if this user is in public.admins
+      const { data, error } = await sb.from("admins").select("user_id").eq("user_id", user.id).maybeSingle();
+      IS_ADMIN = !!data && !error;
+
+      roleText.textContent = IS_ADMIN ? "Admin" : "Sisseloginud (mitte-admin)";
+      userText.textContent = user.email ? `Kasutaja: ${user.email}` : `Kasutaja ID: ${user.id}`;
+
+      openLogin.classList.add("hide");
+      logoutBtn.classList.remove("hide");
+      adminAddCard.classList.toggle("hide", !IS_ADMIN);
+    }
+
+    openLogin.addEventListener("click", () => loginBox.classList.remove("hide"));
+    cancelLogin.addEventListener("click", () => loginBox.classList.add("hide"));
+
+    loginBtn.addEventListener("click", async () => {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) return alert("Login ebaõnnestus: " + error.message);
+
+      loginBox.classList.add("hide");
+      await refreshRoleUI();
+      await renderList();
+    });
+
+    logoutBtn.addEventListener("click", async () => {
+      await sb.auth.signOut();
+      await refreshRoleUI();
+      await renderList();
+    });
+
+    sb.auth.onAuthStateChange(async () => {
+      await refreshRoleUI();
+      await renderList();
+    });
+
+    // ===== DB =====
+    async function loadItemsFromDB() {
+      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return data ?? [];
     }
-
     async function getItemFromDB(id) {
-      const { data, error } = await sb
-        .from("items")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-
+      const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
       if (error) throw error;
       return data;
     }
-
     async function addItemToDB(item) {
       const { error } = await sb.from("items").insert([item]);
-      if (error) throw error;
+      if (error) throw error; // RLS blokib külastaja puhul
     }
-
     async function deleteItemFromDB(id) {
       const { error } = await sb.from("items").delete().eq("id", id);
       if (error) throw error;
     }
-
     async function updateStatusInDB(id, newStatus) {
       const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
       if (error) throw error;
     }
 
+    // ===== LIST =====
     async function renderList() {
       showError(null);
+      itemsBody.innerHTML = "";
 
       const q = (search?.value ?? "").trim().toLowerCase();
-      itemsBody.innerHTML = "";
 
       let items = [];
       try {
@@ -213,15 +296,14 @@
 
       const filtered = items.filter(it =>
         (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
-          .toLowerCase()
-          .includes(q)
+          .toLowerCase().includes(q)
       );
 
       if (filtered.length === 0) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
         td.colSpan = 6;
-        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi. Lisa esimene ese.";
+        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
         td.style.color = "#666";
         td.style.padding = "14px 10px";
         tr.appendChild(td);
@@ -241,7 +323,7 @@
             <div class="btnrow">
               <button type="button" data-qr="${it.id}">QR</button>
               <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
-              <button type="button" class="danger" data-del="${it.id}">Kustuta</button>
+              ${IS_ADMIN ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
             </div>
           </td>
         `;
@@ -249,6 +331,7 @@
       }
     }
 
+    // ===== DETAIL =====
     async function renderDetail(id) {
       showError(null);
 
@@ -269,7 +352,7 @@
       if (!it) {
         detailView.innerHTML = `
           <h2>Ese ei leitud</h2>
-          <p class="muted">Selle ID-ga eset pole (või on see kustutatud).</p>
+          <p class="muted">Selle ID-ga eset pole.</p>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         `;
         detailView.style.display = "block";
@@ -277,6 +360,7 @@
         return;
       }
 
+      // Adminile näitame staatus dropdown + salvesta, külastajale read-only
       detailView.innerHTML = `
         <h2>${escapeHtml(it.name)}</h2>
         <p class="muted">Eseme detailvaade (QR-kood suunab siia).</p>
@@ -292,34 +376,37 @@
         <div style="margin-top:12px;" class="btnrow">
           <button type="button" data-qr="${it.id}">Näita QR</button>
 
-          <select id="detailStatus" style="max-width: 220px;">
-            <option value="Laos">Laos</option>
-            <option value="Väljas">Väljas</option>
-            <option value="Hoolduses">Hoolduses</option>
-          </select>
+          ${IS_ADMIN ? `
+            <select id="detailStatus" style="max-width: 220px;">
+              <option value="Laos">Laos</option>
+              <option value="Väljas">Väljas</option>
+              <option value="Hoolduses">Hoolduses</option>
+            </select>
+            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
+          ` : ``}
 
-          <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         </div>
       `;
 
-      const sel = detailView.querySelector("#detailStatus");
-      sel.value = it.status || "Laos";
-
-      detailView.querySelector("#saveStatus").addEventListener("click", async () => {
-        try {
-          await updateStatusInDB(id, sel.value);
-          await renderDetail(id);
-        } catch (e) {
-          alert("Ei saanud salvestada: " + (e?.message ?? e));
-        }
-      });
+      if (IS_ADMIN) {
+        const sel = detailView.querySelector("#detailStatus");
+        sel.value = it.status || "Laos";
+        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+          try {
+            await updateStatusInDB(id, sel.value);
+            await renderDetail(id);
+          } catch (e) {
+            alert("Ei saanud salvestada: " + (e?.message ?? e));
+          }
+        });
+      }
 
       detailView.style.display = "block";
       mainApp.style.display = "none";
     }
 
-    // QR modal helpers
+    // ===== QR =====
     function closeQR() {
       document.getElementById("qrModal").style.display = "none";
       document.getElementById("qrcode").innerHTML = "";
@@ -333,14 +420,10 @@
       document.getElementById("qrcode").innerHTML = "";
       document.getElementById("qrText").textContent = url;
 
-      new QRCode(document.getElementById("qrcode"), {
-        text: url,
-        width: 220,
-        height: 220
-      });
+      new QRCode(document.getElementById("qrcode"), { text: url, width: 220, height: 220 });
     }
 
-    // Global click handler for QR + delete
+    // ===== EVENTS =====
     document.addEventListener("click", async (e) => {
       const qrId = e.target?.dataset?.qr;
       const delId = e.target?.dataset?.del;
@@ -348,6 +431,7 @@
       if (qrId) openQRForId(qrId);
 
       if (delId) {
+        if (!IS_ADMIN) return; // UI guard (päris guard on RLS)
         const ok = confirm("Kustutan selle eseme?");
         if (!ok) return;
 
@@ -366,6 +450,7 @@
 
     form?.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (!IS_ADMIN) return alert("Ainult admin saab lisada.");
 
       const name = document.getElementById("name").value.trim();
       const qty = Number(document.getElementById("qty").value);
@@ -374,18 +459,10 @@
       const noteVal = document.getElementById("note").value.trim();
 
       try {
-        await addItemToDB({
-          name,
-          qty,
-          location: locationVal,
-          status: statusVal,
-          note: noteVal
-        });
-
+        await addItemToDB({ name, qty, location: locationVal, status: statusVal, note: noteVal });
         form.reset();
         document.getElementById("qty").value = 1;
         document.getElementById("status").value = "Laos";
-
         await renderList();
       } catch (err) {
         alert("Lisamine ebaõnnestus: " + (err?.message ?? err));
@@ -395,8 +472,10 @@
     search?.addEventListener("input", () => renderList());
     refreshBtn?.addEventListener("click", () => renderList());
 
-    // Init: decide between list or detail view
+    // ===== INIT =====
     (async function init() {
+      await refreshRoleUI();
+
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
 
