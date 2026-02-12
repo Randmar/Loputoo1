@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Inventari haldur</title>
 
+  <!-- Supabase client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- QR code library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
@@ -25,16 +27,16 @@
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
     th { font-size: 12px; text-transform: uppercase; color: #666; }
     .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
-    a { color: inherit; }
     .btnrow { display:flex; gap:8px; flex-wrap:wrap; }
     .kvd { display:grid; grid-template-columns: 180px 1fr; gap: 8px 14px; margin-top: 12px; }
     .kvd div { padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .kvd .k { color:#666; font-size: 13px; }
   </style>
 </head>
+
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">QR-koodipõhine nimekiri (salvestub brauserisse).</p>
+  <p class="muted">QR-koodipõhine nimekiri (salvestub Supabase andmebaasi).</p>
 
   <!-- Detail view (shows when ?id=... in URL) -->
   <div id="detailView" class="card" style="display:none;"></div>
@@ -100,11 +102,10 @@
       </table>
 
       <div style="display:flex; gap:10px; margin-top:12px; flex-wrap: wrap;">
-        <button id="clearAll" class="danger" type="button">Kustuta kõik</button>
-        <button id="exportJson" type="button">Ekspordi JSON</button>
+        <button id="refresh" type="button">Värskenda</button>
       </div>
 
-      <pre id="exportOut" style="white-space: pre-wrap; background:#fafafa; border:1px solid #eee; padding:12px; border-radius:10px; margin-top:12px; display:none;"></pre>
+      <p id="err" class="muted" style="display:none;"></p>
     </div>
   </div>
 
@@ -121,28 +122,21 @@
   </div>
 
   <script>
-    const STORAGE_KEY = "inventory_items_v1";
+    // 1) PANE SIIA OMA SUPABASE ANDMED (Project Settings -> API)
+    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
+    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
+
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const form = document.getElementById("itemForm");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
-    const clearAllBtn = document.getElementById("clearAll");
-    const exportBtn = document.getElementById("exportJson");
-    const exportOut = document.getElementById("exportOut");
+    const refreshBtn = document.getElementById("refresh");
+    const errEl = document.getElementById("err");
 
     const mainApp = document.getElementById("mainApp");
     const detailView = document.getElementById("detailView");
 
-    function loadItems() {
-      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? []; }
-      catch { return []; }
-    }
-    function saveItems(items) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    }
-    function uid() {
-      return "id_" + Math.random().toString(16).slice(2) + "_" + Date.now();
-    }
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, s => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -157,17 +151,71 @@
       return baseUrl() + "?id=" + encodeURIComponent(id);
     }
 
-    function renderList() {
-      const items = loadItems();
+    function showError(msg) {
+      if (!msg) {
+        errEl.style.display = "none";
+        errEl.textContent = "";
+        return;
+      }
+      errEl.style.display = "block";
+      errEl.textContent = msg;
+    }
+
+    async function loadItemsFromDB() {
+      const { data, error } = await sb
+        .from("items")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    }
+
+    async function getItemFromDB(id) {
+      const { data, error } = await sb
+        .from("items")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data;
+    }
+
+    async function addItemToDB(item) {
+      const { error } = await sb.from("items").insert([item]);
+      if (error) throw error;
+    }
+
+    async function deleteItemFromDB(id) {
+      const { error } = await sb.from("items").delete().eq("id", id);
+      if (error) throw error;
+    }
+
+    async function updateStatusInDB(id, newStatus) {
+      const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
+      if (error) throw error;
+    }
+
+    async function renderList() {
+      showError(null);
+
       const q = (search?.value ?? "").trim().toLowerCase();
+      itemsBody.innerHTML = "";
+
+      let items = [];
+      try {
+        items = await loadItemsFromDB();
+      } catch (e) {
+        showError("DB viga: " + (e?.message ?? e));
+        return;
+      }
 
       const filtered = items.filter(it =>
-        (it.name + " " + it.location + " " + it.status + " " + (it.note ?? ""))
+        (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
           .toLowerCase()
           .includes(q)
       );
-
-      itemsBody.innerHTML = "";
 
       if (filtered.length === 0) {
         const tr = document.createElement("tr");
@@ -185,9 +233,9 @@
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${escapeHtml(it.name)}</td>
-          <td>${it.qty}</td>
+          <td>${it.qty ?? 1}</td>
           <td>${escapeHtml(it.location || "-")}</td>
-          <td><span class="pill">${escapeHtml(it.status)}</span></td>
+          <td><span class="pill">${escapeHtml(it.status || "-")}</span></td>
           <td>${escapeHtml(it.note || "-")}</td>
           <td>
             <div class="btnrow">
@@ -201,10 +249,22 @@
       }
     }
 
-    // Detail view for ?id=...
-    function renderDetail(id) {
-      const items = loadItems();
-      const it = items.find(x => x.id === id);
+    async function renderDetail(id) {
+      showError(null);
+
+      let it = null;
+      try {
+        it = await getItemFromDB(id);
+      } catch (e) {
+        detailView.innerHTML = `
+          <h2>DB viga</h2>
+          <p class="muted">${escapeHtml(e?.message ?? String(e))}</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        `;
+        detailView.style.display = "block";
+        mainApp.style.display = "none";
+        return;
+      }
 
       if (!it) {
         detailView.innerHTML = `
@@ -223,9 +283,9 @@
 
         <div class="kvd">
           <div class="k">ID</div><div>${escapeHtml(it.id)}</div>
-          <div class="k">Kogus</div><div>${it.qty}</div>
+          <div class="k">Kogus</div><div>${it.qty ?? 1}</div>
           <div class="k">Asukoht</div><div>${escapeHtml(it.location || "-")}</div>
-          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status)}</span></div>
+          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status || "-")}</span></div>
           <div class="k">Märkus</div><div>${escapeHtml(it.note || "-")}</div>
         </div>
 
@@ -243,20 +303,15 @@
         </div>
       `;
 
-      // set current status in dropdown
       const sel = detailView.querySelector("#detailStatus");
-      sel.value = it.status;
+      sel.value = it.status || "Laos";
 
-      // save status
-      detailView.querySelector("#saveStatus").addEventListener("click", () => {
-        const newStatus = sel.value;
-        const itemsNow = loadItems();
-        const idx = itemsNow.findIndex(x => x.id === id);
-        if (idx >= 0) {
-          itemsNow[idx].status = newStatus;
-          saveItems(itemsNow);
-          // re-render detail to update pill
-          renderDetail(id);
+      detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+        try {
+          await updateStatusInDB(id, sel.value);
+          await renderDetail(id);
+        } catch (e) {
+          alert("Ei saanud salvestada: " + (e?.message ?? e));
         }
       });
 
@@ -286,7 +341,7 @@
     }
 
     // Global click handler for QR + delete
-    document.addEventListener("click", (e) => {
+    document.addEventListener("click", async (e) => {
       const qrId = e.target?.dataset?.qr;
       const delId = e.target?.dataset?.del;
 
@@ -296,24 +351,20 @@
         const ok = confirm("Kustutan selle eseme?");
         if (!ok) return;
 
-        const itemsNow = loadItems().filter(x => x.id !== delId);
-        saveItems(itemsNow);
-
-        // if we are in detail view of deleted item, go back
-        const params = new URLSearchParams(location.search);
-        if (params.get("id") === delId) {
-          location.href = baseUrl();
-          return;
+        try {
+          await deleteItemFromDB(delId);
+          const params = new URLSearchParams(location.search);
+          if (params.get("id") === delId) location.href = baseUrl();
+          else await renderList();
+        } catch (err) {
+          alert("Kustutamine ebaõnnestus: " + (err?.message ?? err));
         }
-        renderList();
       }
 
-      // close modal if click on dark background
       if (e.target?.id === "qrModal") closeQR();
     });
 
-    // Form & list logic
-    form?.addEventListener("submit", (e) => {
+    form?.addEventListener("submit", async (e) => {
       e.preventDefault();
 
       const name = document.getElementById("name").value.trim();
@@ -322,53 +373,39 @@
       const statusVal = document.getElementById("status").value;
       const noteVal = document.getElementById("note").value.trim();
 
-      const items = loadItems();
-      items.unshift({
-        id: uid(),
-        name,
-        qty,
-        location: locationVal,
-        status: statusVal,
-        note: noteVal,
-        createdAt: new Date().toISOString()
-      });
-      saveItems(items);
+      try {
+        await addItemToDB({
+          name,
+          qty,
+          location: locationVal,
+          status: statusVal,
+          note: noteVal
+        });
 
-      form.reset();
-      document.getElementById("qty").value = 1;
-      document.getElementById("status").value = "Laos";
-      exportOut.style.display = "none";
+        form.reset();
+        document.getElementById("qty").value = 1;
+        document.getElementById("status").value = "Laos";
 
-      renderList();
-    });
-
-    search?.addEventListener("input", renderList);
-
-    clearAllBtn?.addEventListener("click", () => {
-      if (confirm("Kas oled kindel, et kustutad kõik?")) {
-        localStorage.removeItem(STORAGE_KEY);
-        exportOut.style.display = "none";
-        renderList();
+        await renderList();
+      } catch (err) {
+        alert("Lisamine ebaõnnestus: " + (err?.message ?? err));
       }
     });
 
-    exportBtn?.addEventListener("click", () => {
-      const items = loadItems();
-      exportOut.textContent = JSON.stringify(items, null, 2);
-      exportOut.style.display = "block";
-    });
+    search?.addEventListener("input", () => renderList());
+    refreshBtn?.addEventListener("click", () => renderList());
 
     // Init: decide between list or detail view
-    (function init() {
+    (async function init() {
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
 
       if (id) {
-        renderDetail(id);
+        await renderDetail(id);
       } else {
         detailView.style.display = "none";
         mainApp.style.display = "block";
-        renderList();
+        await renderList();
       }
     })();
   </script>
