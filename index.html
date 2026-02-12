@@ -184,4 +184,193 @@
       for (const it of filtered) {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td>${escapeHtml(it.name)}</
+          <td>${escapeHtml(it.name)}</td>
+          <td>${it.qty}</td>
+          <td>${escapeHtml(it.location || "-")}</td>
+          <td><span class="pill">${escapeHtml(it.status)}</span></td>
+          <td>${escapeHtml(it.note || "-")}</td>
+          <td>
+            <div class="btnrow">
+              <button type="button" data-qr="${it.id}">QR</button>
+              <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
+              <button type="button" class="danger" data-del="${it.id}">Kustuta</button>
+            </div>
+          </td>
+        `;
+        itemsBody.appendChild(tr);
+      }
+    }
+
+    // Detail view for ?id=...
+    function renderDetail(id) {
+      const items = loadItems();
+      const it = items.find(x => x.id === id);
+
+      if (!it) {
+        detailView.innerHTML = `
+          <h2>Ese ei leitud</h2>
+          <p class="muted">Selle ID-ga eset pole (või on see kustutatud).</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        `;
+        detailView.style.display = "block";
+        mainApp.style.display = "none";
+        return;
+      }
+
+      detailView.innerHTML = `
+        <h2>${escapeHtml(it.name)}</h2>
+        <p class="muted">Eseme detailvaade (QR-kood suunab siia).</p>
+
+        <div class="kvd">
+          <div class="k">ID</div><div>${escapeHtml(it.id)}</div>
+          <div class="k">Kogus</div><div>${it.qty}</div>
+          <div class="k">Asukoht</div><div>${escapeHtml(it.location || "-")}</div>
+          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status)}</span></div>
+          <div class="k">Märkus</div><div>${escapeHtml(it.note || "-")}</div>
+        </div>
+
+        <div style="margin-top:12px;" class="btnrow">
+          <button type="button" data-qr="${it.id}">Näita QR</button>
+
+          <select id="detailStatus" style="max-width: 220px;">
+            <option value="Laos">Laos</option>
+            <option value="Väljas">Väljas</option>
+            <option value="Hoolduses">Hoolduses</option>
+          </select>
+
+          <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        </div>
+      `;
+
+      // set current status in dropdown
+      const sel = detailView.querySelector("#detailStatus");
+      sel.value = it.status;
+
+      // save status
+      detailView.querySelector("#saveStatus").addEventListener("click", () => {
+        const newStatus = sel.value;
+        const itemsNow = loadItems();
+        const idx = itemsNow.findIndex(x => x.id === id);
+        if (idx >= 0) {
+          itemsNow[idx].status = newStatus;
+          saveItems(itemsNow);
+          // re-render detail to update pill
+          renderDetail(id);
+        }
+      });
+
+      detailView.style.display = "block";
+      mainApp.style.display = "none";
+    }
+
+    // QR modal helpers
+    function closeQR() {
+      document.getElementById("qrModal").style.display = "none";
+      document.getElementById("qrcode").innerHTML = "";
+      document.getElementById("qrText").textContent = "";
+    }
+    window.closeQR = closeQR;
+
+    function openQRForId(id) {
+      const url = itemUrl(id);
+      document.getElementById("qrModal").style.display = "flex";
+      document.getElementById("qrcode").innerHTML = "";
+      document.getElementById("qrText").textContent = url;
+
+      new QRCode(document.getElementById("qrcode"), {
+        text: url,
+        width: 220,
+        height: 220
+      });
+    }
+
+    // Global click handler for QR + delete
+    document.addEventListener("click", (e) => {
+      const qrId = e.target?.dataset?.qr;
+      const delId = e.target?.dataset?.del;
+
+      if (qrId) openQRForId(qrId);
+
+      if (delId) {
+        const ok = confirm("Kustutan selle eseme?");
+        if (!ok) return;
+
+        const itemsNow = loadItems().filter(x => x.id !== delId);
+        saveItems(itemsNow);
+
+        // if we are in detail view of deleted item, go back
+        const params = new URLSearchParams(location.search);
+        if (params.get("id") === delId) {
+          location.href = baseUrl();
+          return;
+        }
+        renderList();
+      }
+
+      // close modal if click on dark background
+      if (e.target?.id === "qrModal") closeQR();
+    });
+
+    // Form & list logic
+    form?.addEventListener("submit", (e) => {
+      e.preventDefault();
+
+      const name = document.getElementById("name").value.trim();
+      const qty = Number(document.getElementById("qty").value);
+      const locationVal = document.getElementById("location").value.trim();
+      const statusVal = document.getElementById("status").value;
+      const noteVal = document.getElementById("note").value.trim();
+
+      const items = loadItems();
+      items.unshift({
+        id: uid(),
+        name,
+        qty,
+        location: locationVal,
+        status: statusVal,
+        note: noteVal,
+        createdAt: new Date().toISOString()
+      });
+      saveItems(items);
+
+      form.reset();
+      document.getElementById("qty").value = 1;
+      document.getElementById("status").value = "Laos";
+      exportOut.style.display = "none";
+
+      renderList();
+    });
+
+    search?.addEventListener("input", renderList);
+
+    clearAllBtn?.addEventListener("click", () => {
+      if (confirm("Kas oled kindel, et kustutad kõik?")) {
+        localStorage.removeItem(STORAGE_KEY);
+        exportOut.style.display = "none";
+        renderList();
+      }
+    });
+
+    exportBtn?.addEventListener("click", () => {
+      const items = loadItems();
+      exportOut.textContent = JSON.stringify(items, null, 2);
+      exportOut.style.display = "block";
+    });
+
+    // Init: decide between list or detail view
+    (function init() {
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
+
+      if (id) {
+        renderDetail(id);
+      } else {
+        detailView.style.display = "none";
+        mainApp.style.display = "block";
+        renderList();
+      }
+    })();
+  </script>
+</body>
+</html>
