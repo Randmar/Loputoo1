@@ -9,9 +9,13 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- QR code library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- SheetJS for Excel import/export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <style>
-    body { font-family: system-ui, Arial; max-width: 900px; margin: 40px auto; padding: 0 16px; }
+    body { font-family: system-ui, Arial; max-width: 1000px; margin: 40px auto; padding: 0 16px; }
     h1 { margin-bottom: 8px; }
     .muted { color: #666; margin-top: 0; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
@@ -27,24 +31,44 @@
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
     th { font-size: 12px; text-transform: uppercase; color: #666; }
     .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
-    .btnrow { display:flex; gap:8px; flex-wrap:wrap; }
+    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .kvd { display:grid; grid-template-columns: 180px 1fr; gap: 8px 14px; margin-top: 12px; }
     .kvd div { padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .kvd .k { color:#666; font-size: 13px; }
+    .hide { display:none !important; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
+    .status { font-size: 13px; color:#444; }
   </style>
 </head>
 
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">QR-koodipõhine nimekiri (salvestub Supabase andmebaasi).</p>
+  <p class="muted">QR-koodipõhine nimekiri (Supabase). Admin pääseb ligi “koodiga” (ilma kontota).</p>
 
-  <!-- Detail view (shows when ?id=... in URL) -->
+  <!-- ADMIN BAR -->
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <strong>Režiim:</strong> <span id="modeText">Külastaja</span>
+        <div class="muted" style="font-size:12px;">Admin režiim on UI-koodiga. (Supabase RLS peab olema OFF)</div>
+      </div>
+      <div class="btnrow">
+        <button class="light" type="button" onclick="window.enterAdmin()">Admin kood</button>
+        <button class="light" type="button" onclick="window.exitAdmin()">Välju administ</button>
+      </div>
+    </div>
+    <div class="status" id="adminHint" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- Detail view -->
   <div id="detailView" class="card" style="display:none;"></div>
 
   <!-- Main app -->
   <div id="mainApp">
-    <div class="card">
-      <h2>Lisa ese</h2>
+
+    <!-- ADD (ADMIN ONLY) -->
+    <div class="card" id="addCard">
+      <h2>Lisa ese (admin)</h2>
       <form id="itemForm">
         <div class="row">
           <div>
@@ -81,6 +105,7 @@
       </form>
     </div>
 
+    <!-- LIST -->
     <div class="card">
       <div class="toolbar">
         <h2 style="margin:0;">Nimekiri</h2>
@@ -101,17 +126,23 @@
         <tbody id="itemsBody"></tbody>
       </table>
 
-      <div style="display:flex; gap:10px; margin-top:12px; flex-wrap: wrap;">
+      <div class="btnrow" style="margin-top:12px;">
         <button id="refresh" type="button">Värskenda</button>
+
+        <!-- Excel -->
+        <button id="exportXlsx" type="button">Ekspordi Excel</button>
+        <button id="importXlsx" type="button">Impordi Excel</button>
+        <input id="xlsxFile" type="file" accept=".xlsx,.xls" class="hide" />
       </div>
 
       <p id="err" class="muted" style="display:none;"></p>
+      <p id="msg" class="status" style="display:none;"></p>
     </div>
   </div>
 
   <!-- QR modal -->
   <div id="qrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); justify-content:center; align-items:center; padding: 18px;">
-    <div style="background:white; padding:20px; border-radius:12px; text-align:center; width:min(340px, 100%);">
+    <div style="background:white; padding:20px; border-radius:12px; text-align:center; width:min(360px, 100%);">
       <h3 style="margin-top:0;">QR kood</h3>
       <div id="qrcode" style="display:flex; justify-content:center;"></div>
       <p class="muted" id="qrText" style="font-size:12px; word-break: break-all;"></p>
@@ -121,29 +152,55 @@
     </div>
   </div>
 
-  <script>
-    // 1) PANE SIIA OMA SUPABASE ANDMED (Project Settings -> API)
-    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
+  <!-- hidden QR render area for PDF -->
+  <div id="qrHidden" class="hide"></div>
 
+  <script>
+    // ====== CONFIG ======
+    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
+    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ADMIN code (UI only)
+    const ADMIN_CODE = "1234"; // MUUDA OMAKS
+    const ADMIN_SESSION_KEY = "inv_admin_mode_v1";
+
+    // ====== UI refs ======
+    const modeText = document.getElementById("modeText");
+    const adminHint = document.getElementById("adminHint");
+    const addCard = document.getElementById("addCard");
 
     const form = document.getElementById("itemForm");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
     const refreshBtn = document.getElementById("refresh");
     const errEl = document.getElementById("err");
+    const msgEl = document.getElementById("msg");
+
+    const exportXlsxBtn = document.getElementById("exportXlsx");
+    const importXlsxBtn = document.getElementById("importXlsx");
+    const xlsxFile = document.getElementById("xlsxFile");
 
     const mainApp = document.getElementById("mainApp");
     const detailView = document.getElementById("detailView");
 
+    let IS_ADMIN = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
+
+    function setMessage(text) {
+      if (!text) { msgEl.style.display = "none"; msgEl.textContent = ""; return; }
+      msgEl.style.display = "block";
+      msgEl.textContent = text;
+    }
+    function showError(msg) {
+      if (!msg) { errEl.style.display = "none"; errEl.textContent = ""; return; }
+      errEl.style.display = "block";
+      errEl.textContent = msg;
+    }
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, s => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[s]));
     }
-
-    // Base URL of this page (without query/hash), works on GitHub Pages too
     function baseUrl() {
       return location.origin + location.pathname.replace(/\/$/, "") + "/";
     }
@@ -151,33 +208,46 @@
       return baseUrl() + "?id=" + encodeURIComponent(id);
     }
 
-    function showError(msg) {
-      if (!msg) {
-        errEl.style.display = "none";
-        errEl.textContent = "";
-        return;
-      }
-      errEl.style.display = "block";
-      errEl.textContent = msg;
+    function updateAdminUI() {
+      modeText.textContent = IS_ADMIN ? "Admin" : "Külastaja";
+      addCard.style.display = IS_ADMIN ? "block" : "none";
+      adminHint.textContent = IS_ADMIN
+        ? "Admin režiim ON (saad lisada/kustutada/muuta)."
+        : "Külastaja režiim (ainult vaatamine).";
     }
 
-    async function loadItemsFromDB() {
-      const { data, error } = await sb
-        .from("items")
-        .select("*")
-        .order("created_at", { ascending: false });
+    window.enterAdmin = function () {
+      const code = prompt("Sisesta admin kood:");
+      if (code === ADMIN_CODE) {
+        IS_ADMIN = true;
+        sessionStorage.setItem(ADMIN_SESSION_KEY, "1");
+        updateAdminUI();
+        renderList();
+      } else {
+        alert("Vale kood.");
+      }
+    };
 
+    window.exitAdmin = function () {
+      IS_ADMIN = false;
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      updateAdminUI();
+      renderList();
+      // detail vaates uuesti render, et admin nupud kaoks
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
+      if (id) renderDetail(id);
+    };
+
+    // ====== DB ======
+    async function loadItemsFromDB() {
+      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
       if (error) throw error;
       return data ?? [];
     }
 
     async function getItemFromDB(id) {
-      const { data, error } = await sb
-        .from("items")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-
+      const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
       if (error) throw error;
       return data;
     }
@@ -197,11 +267,13 @@
       if (error) throw error;
     }
 
+    // ====== LIST ======
     async function renderList() {
       showError(null);
+      setMessage(null);
+      itemsBody.innerHTML = "";
 
       const q = (search?.value ?? "").trim().toLowerCase();
-      itemsBody.innerHTML = "";
 
       let items = [];
       try {
@@ -221,7 +293,7 @@
         const tr = document.createElement("tr");
         const td = document.createElement("td");
         td.colSpan = 6;
-        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi. Lisa esimene ese.";
+        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
         td.style.color = "#666";
         td.style.padding = "14px 10px";
         tr.appendChild(td);
@@ -240,8 +312,9 @@
           <td>
             <div class="btnrow">
               <button type="button" data-qr="${it.id}">QR</button>
+              <button type="button" data-qpdf="${it.id}" data-name="${escapeHtml(it.name)}">QR PDF (2×2cm)</button>
               <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
-              <button type="button" class="danger" data-del="${it.id}">Kustuta</button>
+              ${IS_ADMIN ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
             </div>
           </td>
         `;
@@ -249,8 +322,10 @@
       }
     }
 
+    // ====== DETAIL ======
     async function renderDetail(id) {
       showError(null);
+      setMessage(null);
 
       let it = null;
       try {
@@ -269,7 +344,7 @@
       if (!it) {
         detailView.innerHTML = `
           <h2>Ese ei leitud</h2>
-          <p class="muted">Selle ID-ga eset pole (või on see kustutatud).</p>
+          <p class="muted">Selle ID-ga eset pole (või on kustutatud).</p>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         `;
         detailView.style.display = "block";
@@ -291,35 +366,39 @@
 
         <div style="margin-top:12px;" class="btnrow">
           <button type="button" data-qr="${it.id}">Näita QR</button>
+          <button type="button" data-qpdf="${it.id}" data-name="${escapeHtml(it.name)}">QR PDF (2×2cm)</button>
 
-          <select id="detailStatus" style="max-width: 220px;">
-            <option value="Laos">Laos</option>
-            <option value="Väljas">Väljas</option>
-            <option value="Hoolduses">Hoolduses</option>
-          </select>
+          ${IS_ADMIN ? `
+            <select id="detailStatus" style="max-width: 220px;">
+              <option value="Laos">Laos</option>
+              <option value="Väljas">Väljas</option>
+              <option value="Hoolduses">Hoolduses</option>
+            </select>
+            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
+          ` : ``}
 
-          <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         </div>
       `;
 
-      const sel = detailView.querySelector("#detailStatus");
-      sel.value = it.status || "Laos";
-
-      detailView.querySelector("#saveStatus").addEventListener("click", async () => {
-        try {
-          await updateStatusInDB(id, sel.value);
-          await renderDetail(id);
-        } catch (e) {
-          alert("Ei saanud salvestada: " + (e?.message ?? e));
-        }
-      });
+      if (IS_ADMIN) {
+        const sel = detailView.querySelector("#detailStatus");
+        sel.value = it.status || "Laos";
+        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+          try {
+            await updateStatusInDB(id, sel.value);
+            await renderDetail(id);
+          } catch (e) {
+            alert("Ei saanud salvestada: " + (e?.message ?? e));
+          }
+        });
+      }
 
       detailView.style.display = "block";
       mainApp.style.display = "none";
     }
 
-    // QR modal helpers
+    // ====== QR modal ======
     function closeQR() {
       document.getElementById("qrModal").style.display = "none";
       document.getElementById("qrcode").innerHTML = "";
@@ -340,14 +419,162 @@
       });
     }
 
-    // Global click handler for QR + delete
+    // ====== QR -> PDF (2x2 cm) ======
+    async function downloadQrPdf2x2cm(id, nameForFile) {
+      const url = itemUrl(id);
+
+      // render QR to hidden container as canvas
+      const box = document.getElementById("qrHidden");
+      box.innerHTML = "";
+      box.classList.remove("hide");
+
+      new QRCode(box, { text: url, width: 256, height: 256 });
+
+      // Wait a tick for canvas to appear
+      await new Promise(r => setTimeout(r, 60));
+
+      const canvas = box.querySelector("canvas");
+      if (!canvas) {
+        box.classList.add("hide");
+        throw new Error("QR canvas ei tekkinud.");
+      }
+
+      const imgData = canvas.toDataURL("image/png");
+
+      // Create PDF exactly 20mm x 20mm
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: [20, 20] });
+
+      // Fill the page (0 margin) with QR
+      doc.addImage(imgData, "PNG", 0, 0, 20, 20);
+
+      const safeName = (nameForFile || id).toString().replace(/[\\/:*?"<>|]+/g, "_");
+      doc.save(`${safeName}_QR_2x2cm.pdf`);
+
+      box.classList.add("hide");
+      box.innerHTML = "";
+    }
+
+    // ====== Excel import/export ======
+    function normalizeHeader(h) {
+      return String(h || "").trim().toLowerCase();
+    }
+
+    function mapRowToItem(rowObj) {
+      // accept both EN and ET headers
+      const keys = Object.keys(rowObj);
+      const get = (...names) => {
+        for (const n of names) {
+          const k = keys.find(k => normalizeHeader(k) === normalizeHeader(n));
+          if (k != null) return rowObj[k];
+        }
+        return "";
+      };
+
+      const name = String(get("name", "nimi")).trim();
+      if (!name) return null;
+
+      const qtyRaw = get("qty", "quantity", "kogus");
+      const qty = Number(qtyRaw || 1) || 1;
+
+      const location = String(get("location", "asukoht")).trim();
+      const status = String(get("status", "staatus")).trim() || "Laos";
+      const note = String(get("note", "märkus", "markus")).trim();
+
+      return { name, qty, location, status, note };
+    }
+
+    async function importExcelFile(file) {
+      if (!IS_ADMIN) { alert("Impordiks pead olema admin režiimis."); return; }
+
+      setMessage("Loen Excelit...");
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array" });
+
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      const items = [];
+      for (const r of rows) {
+        const it = mapRowToItem(r);
+        if (it) items.push(it);
+      }
+
+      if (items.length === 0) {
+        setMessage(null);
+        alert("Ei leidnud ühtegi rida. Veendu, et on veerud nagu: name/qty/location/status/note (või eesti keeles).");
+        return;
+      }
+
+      // Insert in batches
+      setMessage(`Impordin... (kokku ${items.length} rida)`);
+      const batchSize = 100;
+
+      try {
+        for (let i = 0; i < items.length; i += batchSize) {
+          const batch = items.slice(i, i + batchSize);
+          const { error } = await sb.from("items").insert(batch);
+          if (error) throw error;
+          setMessage(`Impordin... ${Math.min(i + batchSize, items.length)}/${items.length}`);
+        }
+      } catch (e) {
+        setMessage(null);
+        alert("Import ebaõnnestus: " + (e?.message ?? e));
+        return;
+      }
+
+      setMessage("Import valmis ✅");
+      await renderList();
+    }
+
+    async function exportExcel() {
+      setMessage("Ekspordin Excelit...");
+      let items = [];
+      try {
+        items = await loadItemsFromDB();
+      } catch (e) {
+        setMessage(null);
+        alert("Ei saanud andmeid: " + (e?.message ?? e));
+        return;
+      }
+
+      const out = items.map(it => ({
+        id: it.id,
+        name: it.name,
+        qty: it.qty ?? 1,
+        location: it.location ?? "",
+        status: it.status ?? "",
+        note: it.note ?? "",
+        created_at: it.created_at ?? ""
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(out);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "items");
+      XLSX.writeFile(wb, "inventar.xlsx");
+      setMessage(null);
+    }
+
+    // ====== events ======
     document.addEventListener("click", async (e) => {
       const qrId = e.target?.dataset?.qr;
       const delId = e.target?.dataset?.del;
+      const qpdfId = e.target?.dataset?.qpdf;
 
       if (qrId) openQRForId(qrId);
 
+      if (qpdfId) {
+        try {
+          const nm = e.target?.dataset?.name || qpdfId;
+          await downloadQrPdf2x2cm(qpdfId, nm);
+        } catch (err) {
+          alert("PDF tegemine ebaõnnestus: " + (err?.message ?? err));
+        }
+      }
+
       if (delId) {
+        if (!IS_ADMIN) return alert("Kustutamiseks pead olema admin režiimis.");
         const ok = confirm("Kustutan selle eseme?");
         if (!ok) return;
 
@@ -366,6 +593,7 @@
 
     form?.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (!IS_ADMIN) return alert("Lisamiseks pead olema admin režiimis.");
 
       const name = document.getElementById("name").value.trim();
       const qty = Number(document.getElementById("qty").value);
@@ -376,7 +604,7 @@
       try {
         await addItemToDB({
           name,
-          qty,
+          qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
           location: locationVal,
           status: statusVal,
           note: noteVal
@@ -395,8 +623,24 @@
     search?.addEventListener("input", () => renderList());
     refreshBtn?.addEventListener("click", () => renderList());
 
-    // Init: decide between list or detail view
+    exportXlsxBtn?.addEventListener("click", exportExcel);
+
+    importXlsxBtn?.addEventListener("click", () => {
+      if (!IS_ADMIN) return alert("Impordiks pead olema admin režiimis.");
+      xlsxFile.value = "";
+      xlsxFile.click();
+    });
+
+    xlsxFile?.addEventListener("change", async () => {
+      const f = xlsxFile.files?.[0];
+      if (!f) return;
+      await importExcelFile(f);
+    });
+
+    // ====== init ======
     (async function init() {
+      updateAdminUI();
+
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
 
