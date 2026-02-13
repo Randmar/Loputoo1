@@ -43,14 +43,12 @@
 
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">QR-koodipõhine nimekiri (Supabase). Admin pääseb ligi “koodiga” (ilma kontota).</p>
 
   <!-- ADMIN BAR -->
   <div class="card">
     <div class="toolbar">
       <div>
         <strong>Režiim:</strong> <span id="modeText">Külastaja</span>
-        <div class="muted" style="font-size:12px;">Admin režiim on UI-koodiga. (Supabase RLS peab olema OFF)</div>
       </div>
       <div class="btnrow">
         <button class="light" type="button" onclick="window.enterAdmin()">Admin kood</button>
@@ -157,8 +155,8 @@
 
   <script>
     // ====== CONFIG ======
-    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
-    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
+    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // ADMIN code (UI only)
