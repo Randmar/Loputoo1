@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Inventari haldur</title>
 
+  <!-- Supabase client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- QR code library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <style>
@@ -36,45 +38,19 @@
 
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">Külastaja näeb listi. Admin saab muuta (Supabase Auth + RLS).</p>
+  <p class="muted">QR-koodipõhine nimekiri (Supabase). Külastaja näeb, haldusrežiimis saab muuta.</p>
 
-  <!-- AUTH / ROLE BAR -->
+  <!-- MODE BAR -->
   <div class="card">
     <div class="toolbar">
       <div>
-        <strong>Režiim:</strong> <span id="roleText">Külastaja</span>
-        <div class="muted" id="userText" style="font-size:12px;"></div>
+        <strong>Režiim:</strong> <span id="modeText">Külastaja</span>
+        <div class="muted" style="font-size:12px;">Haldusrežiim on lihtne parooliga UI (mitte “päris turvaline”).</div>
       </div>
       <div class="btnrow">
-        <button id="openLogin" class="light" type="button"
-          onclick="document.getElementById('loginBox').classList.remove('hide')">
-          Admin login
-        </button>
-        <button id="logoutBtn" class="light hide" type="button">Logi välja</button>
+        <button class="light" type="button" onclick="enableEditMode()">Haldusrežiim</button>
+        <button class="light" type="button" onclick="disableEditMode()">Välju haldusest</button>
       </div>
-    </div>
-
-    <!-- Login form -->
-    <div id="loginBox" class="hide" style="margin-top:12px;">
-      <div class="row">
-        <div>
-          <label for="email">Email</label>
-          <input id="email" type="email" placeholder="admin@..." autocomplete="username" />
-        </div>
-        <div>
-          <label for="password">Parool</label>
-          <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
-        </div>
-      </div>
-      <div class="btnrow" style="margin-top:12px;">
-        <button id="loginBtn" class="primary" type="button" onclick="doLogin()">Logi sisse</button>
-        <button id="cancelLogin" class="light" type="button"
-          onclick="document.getElementById('loginBox').classList.add('hide')">
-          Tühista
-        </button>
-      </div>
-      <p class="muted" id="authErr" style="margin-bottom:0; display:none;"></p>
-      <p class="muted" style="margin-bottom:0;">Admin õigused tulevad RLS poliitikatest (tabel <code>admins</code>).</p>
     </div>
   </div>
 
@@ -83,10 +59,9 @@
 
   <!-- Main app -->
   <div id="mainApp">
-
-    <!-- ADMIN: add form -->
-    <div id="adminAddCard" class="card hide">
-      <h2>Lisa ese (admin)</h2>
+    <!-- ADD (ADMIN MODE ONLY) -->
+    <div class="card" id="addCard">
+      <h2>Lisa ese</h2>
       <form id="itemForm">
         <div class="row">
           <div>
@@ -165,48 +140,40 @@
   </div>
 
   <script>
-
-    window.doLogin = async function doLogin() {
-  try {
-    const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-
-    // nähtav kontroll, et klikk töötab
-    alert("Proovin sisse logida: " + email);
-
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      alert("Login ebaõnnestus: " + error.message);
-      return;
-    }
-
-    alert("Login OK!");
-    // uuenda rolli ja listi
-    if (typeof refreshRoleUI === "function") await refreshRoleUI();
-    if (typeof renderList === "function") await renderList();
-
-    // sulge login box
-    const lb = document.getElementById("loginBox");
-    if (lb) lb.classList.add("hide");
-  } catch (e) {
-    alert("Login crash: " + (e?.message ?? e));
-  }
-};
-
-    // ====== CONFIG ======
-    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
+    // ====== CONFIG (pane oma väärtused) ======
+    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
+    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // ====== UI refs ======
-    const roleText = document.getElementById("roleText");
-    const userText = document.getElementById("userText");
-    const logoutBtn = document.getElementById("logoutBtn");
-    const loginBtn = document.getElementById("loginBtn");
-    const authErr = document.getElementById("authErr");
+    // ====== EDIT MODE (UI parool) ======
+    // MUUDA SEE PAROOL OMAKS:
+    const EDIT_PASSWORD = "1234";
+    window.IS_EDIT_MODE = false;
 
-    const adminAddCard = document.getElementById("adminAddCard");
+    function updateModeUI() {
+      document.getElementById("modeText").textContent = window.IS_EDIT_MODE ? "Haldus" : "Külastaja";
+      const addCard = document.getElementById("addCard");
+      addCard.style.display = window.IS_EDIT_MODE ? "block" : "none";
+    }
+
+    window.enableEditMode = function enableEditMode() {
+      const pw = prompt("Sisesta haldusparool:");
+      if (pw === EDIT_PASSWORD) {
+        window.IS_EDIT_MODE = true;
+        updateModeUI();
+        renderList();
+      } else {
+        alert("Vale parool.");
+      }
+    };
+
+    window.disableEditMode = function disableEditMode() {
+      window.IS_EDIT_MODE = false;
+      updateModeUI();
+      renderList();
+    };
+
+    // ====== UI refs ======
     const form = document.getElementById("itemForm");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
@@ -215,8 +182,6 @@
 
     const mainApp = document.getElementById("mainApp");
     const detailView = document.getElementById("detailView");
-
-    let IS_ADMIN = false;
 
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, s => ({
@@ -237,27 +202,238 @@
       errEl.textContent = msg;
     }
 
-    function showAuthError(msg) {
-      if (!msg) { authErr.style.display = "none"; authErr.textContent = ""; return; }
-      authErr.style.display = "block";
-      authErr.textContent = msg;
+    // ====== DB ======
+    async function loadItemsFromDB() {
+      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    }
+    async function getItemFromDB(id) {
+      const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
+      if (error) throw error;
+      return data;
+    }
+    async function addItemToDB(item) {
+      const { error } = await sb.from("items").insert([item]);
+      if (error) throw error;
+    }
+    async function deleteItemFromDB(id) {
+      const { error } = await sb.from("items").delete().eq("id", id);
+      if (error) throw error;
+    }
+    async function updateStatusInDB(id, newStatus) {
+      const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
+      if (error) throw error;
     }
 
-    // ====== AUTH / ADMIN CHECK ======
-    async function refreshRoleUI() {
-      const { data: { session } } = await sb.auth.getSession();
-      const user = session?.user ?? null;
+    // ====== LIST ======
+    async function renderList() {
+      showError(null);
+      itemsBody.innerHTML = "";
 
-      if (!user) {
-        IS_ADMIN = false;
-        roleText.textContent = "Külastaja";
-        userText.textContent = "";
-        logoutBtn.classList.add("hide");
-        adminAddCard.classList.add("hide");
+      const q = (search?.value ?? "").trim().toLowerCase();
+
+      let items = [];
+      try {
+        items = await loadItemsFromDB();
+      } catch (e) {
+        showError("DB viga: " + (e?.message ?? e));
         return;
       }
 
-      // Check admin via admins table
-      const { data, error } = await sb.from("admins")
-        .select("user_id")
-        .eq("user_id",_
+      const filtered = items.filter(it =>
+        (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
+          .toLowerCase().includes(q)
+      );
+
+      if (filtered.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
+        td.style.color = "#666";
+        td.style.padding = "14px 10px";
+        tr.appendChild(td);
+        itemsBody.appendChild(tr);
+        return;
+      }
+
+      for (const it of filtered) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(it.name)}</td>
+          <td>${it.qty ?? 1}</td>
+          <td>${escapeHtml(it.location || "-")}</td>
+          <td><span class="pill">${escapeHtml(it.status || "-")}</span></td>
+          <td>${escapeHtml(it.note || "-")}</td>
+          <td>
+            <div class="btnrow">
+              <button type="button" data-qr="${it.id}">QR</button>
+              <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
+              ${window.IS_EDIT_MODE ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
+            </div>
+          </td>
+        `;
+        itemsBody.appendChild(tr);
+      }
+    }
+
+    // ====== DETAIL ======
+    async function renderDetail(id) {
+      showError(null);
+
+      let it = null;
+      try {
+        it = await getItemFromDB(id);
+      } catch (e) {
+        detailView.innerHTML = `
+          <h2>DB viga</h2>
+          <p class="muted">${escapeHtml(e?.message ?? String(e))}</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        `;
+        detailView.style.display = "block";
+        mainApp.style.display = "none";
+        return;
+      }
+
+      if (!it) {
+        detailView.innerHTML = `
+          <h2>Ese ei leitud</h2>
+          <p class="muted">Selle ID-ga eset pole.</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        `;
+        detailView.style.display = "block";
+        mainApp.style.display = "none";
+        return;
+      }
+
+      detailView.innerHTML = `
+        <h2>${escapeHtml(it.name)}</h2>
+        <p class="muted">Eseme detailvaade (QR-kood suunab siia).</p>
+
+        <div class="kvd">
+          <div class="k">ID</div><div>${escapeHtml(it.id)}</div>
+          <div class="k">Kogus</div><div>${it.qty ?? 1}</div>
+          <div class="k">Asukoht</div><div>${escapeHtml(it.location || "-")}</div>
+          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status || "-")}</span></div>
+          <div class="k">Märkus</div><div>${escapeHtml(it.note || "-")}</div>
+        </div>
+
+        <div style="margin-top:12px;" class="btnrow">
+          <button type="button" data-qr="${it.id}">Näita QR</button>
+
+          ${window.IS_EDIT_MODE ? `
+            <select id="detailStatus" style="max-width: 220px;">
+              <option value="Laos">Laos</option>
+              <option value="Väljas">Väljas</option>
+              <option value="Hoolduses">Hoolduses</option>
+            </select>
+            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
+          ` : ``}
+
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        </div>
+      `;
+
+      if (window.IS_EDIT_MODE) {
+        const sel = detailView.querySelector("#detailStatus");
+        sel.value = it.status || "Laos";
+        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+          try {
+            await updateStatusInDB(id, sel.value);
+            await renderDetail(id);
+          } catch (e) {
+            alert("Ei saanud salvestada: " + (e?.message ?? e));
+          }
+        });
+      }
+
+      detailView.style.display = "block";
+      mainApp.style.display = "none";
+    }
+
+    // ====== QR ======
+    function closeQR() {
+      document.getElementById("qrModal").style.display = "none";
+      document.getElementById("qrcode").innerHTML = "";
+      document.getElementById("qrText").textContent = "";
+    }
+    window.closeQR = closeQR;
+
+    function openQRForId(id) {
+      const url = itemUrl(id);
+      document.getElementById("qrModal").style.display = "flex";
+      document.getElementById("qrcode").innerHTML = "";
+      document.getElementById("qrText").textContent = url;
+      new QRCode(document.getElementById("qrcode"), { text: url, width: 220, height: 220 });
+    }
+
+    // ====== EVENTS ======
+    document.addEventListener("click", async (e) => {
+      const qrId = e.target?.dataset?.qr;
+      const delId = e.target?.dataset?.del;
+
+      if (qrId) openQRForId(qrId);
+
+      if (delId) {
+        if (!window.IS_EDIT_MODE) return;
+        const ok = confirm("Kustutan selle eseme?");
+        if (!ok) return;
+
+        try {
+          await deleteItemFromDB(delId);
+          const params = new URLSearchParams(location.search);
+          if (params.get("id") === delId) location.href = baseUrl();
+          else await renderList();
+        } catch (err) {
+          alert("Kustutamine ebaõnnestus: " + (err?.message ?? err));
+        }
+      }
+
+      if (e.target?.id === "qrModal") closeQR();
+    });
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!window.IS_EDIT_MODE) return alert("Luba haldusrežiim, et lisada.");
+
+      const name = document.getElementById("name").value.trim();
+      const qty = Number(document.getElementById("qty").value);
+      const locationVal = document.getElementById("location").value.trim();
+      const statusVal = document.getElementById("status").value;
+      const noteVal = document.getElementById("note").value.trim();
+
+      try {
+        await addItemToDB({ name, qty, location: locationVal, status: statusVal, note: noteVal });
+
+        form.reset();
+        document.getElementById("qty").value = 1;
+        document.getElementById("status").value = "Laos";
+
+        await renderList();
+      } catch (err) {
+        alert("Lisamine ebaõnnestus: " + (err?.message ?? err));
+      }
+    });
+
+    search?.addEventListener("input", () => renderList());
+    refreshBtn?.addEventListener("click", () => renderList());
+
+    // ====== INIT ======
+    (async function init() {
+      updateModeUI();
+
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
+
+      if (id) {
+        await renderDetail(id);
+      } else {
+        detailView.style.display = "none";
+        mainApp.style.display = "block";
+        await renderList();
+      }
+    })();
+  </script>
+</body>
+</html>
