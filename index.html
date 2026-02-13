@@ -27,40 +27,23 @@
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
     th { font-size: 12px; text-transform: uppercase; color: #666; }
     .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
-    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .btnrow { display:flex; gap:8px; flex-wrap:wrap; }
     .kvd { display:grid; grid-template-columns: 180px 1fr; gap: 8px 14px; margin-top: 12px; }
     .kvd div { padding: 6px 0; border-bottom: 1px solid #f1f1f1; }
     .kvd .k { color:#666; font-size: 13px; }
-    .hide { display:none !important; }
-    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
 
 <body>
   <h1>Inventari haldur</h1>
-  <p class="muted">QR-koodipõhine nimekiri (Supabase). Külastaja näeb, haldusrežiimis saab muuta.</p>
+  <p class="muted">QR-koodipõhine nimekiri (salvestub Supabase andmebaasi).</p>
 
-  <!-- MODE BAR -->
-  <div class="card">
-    <div class="toolbar">
-      <div>
-        <strong>Režiim:</strong> <span id="modeText">Külastaja</span>
-        <div class="muted" style="font-size:12px;">Haldusrežiim on lihtne parooliga UI (mitte “päris turvaline”).</div>
-      </div>
-      <div class="btnrow">
-        <button class="light" type="button" onclick="enableEditMode()">Haldusrežiim</button>
-        <button class="light" type="button" onclick="disableEditMode()">Välju haldusest</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Detail view -->
+  <!-- Detail view (shows when ?id=... in URL) -->
   <div id="detailView" class="card" style="display:none;"></div>
 
   <!-- Main app -->
   <div id="mainApp">
-    <!-- ADD (ADMIN MODE ONLY) -->
-    <div class="card" id="addCard">
+    <div class="card">
       <h2>Lisa ese</h2>
       <form id="itemForm">
         <div class="row">
@@ -98,7 +81,6 @@
       </form>
     </div>
 
-    <!-- LIST -->
     <div class="card">
       <div class="toolbar">
         <h2 style="margin:0;">Nimekiri</h2>
@@ -119,7 +101,7 @@
         <tbody id="itemsBody"></tbody>
       </table>
 
-      <div class="btnrow" style="margin-top:12px;">
+      <div style="display:flex; gap:10px; margin-top:12px; flex-wrap: wrap;">
         <button id="refresh" type="button">Värskenda</button>
       </div>
 
@@ -140,40 +122,12 @@
   </div>
 
   <script>
-    // ====== CONFIG (pane oma väärtused) ======
-    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
-    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
+    // 1) PANE SIIA OMA SUPABASE ANDMED (Project Settings -> API)
+    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
+
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // ====== EDIT MODE (UI parool) ======
-    // MUUDA SEE PAROOL OMAKS:
-    const EDIT_PASSWORD = "1234";
-    window.IS_EDIT_MODE = false;
-
-    function updateModeUI() {
-      document.getElementById("modeText").textContent = window.IS_EDIT_MODE ? "Haldus" : "Külastaja";
-      const addCard = document.getElementById("addCard");
-      addCard.style.display = window.IS_EDIT_MODE ? "block" : "none";
-    }
-
-    window.enableEditMode = function enableEditMode() {
-      const pw = prompt("Sisesta haldusparool:");
-      if (pw === EDIT_PASSWORD) {
-        window.IS_EDIT_MODE = true;
-        updateModeUI();
-        renderList();
-      } else {
-        alert("Vale parool.");
-      }
-    };
-
-    window.disableEditMode = function disableEditMode() {
-      window.IS_EDIT_MODE = false;
-      updateModeUI();
-      renderList();
-    };
-
-    // ====== UI refs ======
     const form = document.getElementById("itemForm");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
@@ -189,6 +143,7 @@
       }[s]));
     }
 
+    // Base URL of this page (without query/hash), works on GitHub Pages too
     function baseUrl() {
       return location.origin + location.pathname.replace(/\/$/, "") + "/";
     }
@@ -197,41 +152,56 @@
     }
 
     function showError(msg) {
-      if (!msg) { errEl.style.display = "none"; errEl.textContent = ""; return; }
+      if (!msg) {
+        errEl.style.display = "none";
+        errEl.textContent = "";
+        return;
+      }
       errEl.style.display = "block";
       errEl.textContent = msg;
     }
 
-    // ====== DB ======
     async function loadItemsFromDB() {
-      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
+      const { data, error } = await sb
+        .from("items")
+        .select("*")
+        .order("created_at", { ascending: false });
+
       if (error) throw error;
       return data ?? [];
     }
+
     async function getItemFromDB(id) {
-      const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
+      const { data, error } = await sb
+        .from("items")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+
       if (error) throw error;
       return data;
     }
+
     async function addItemToDB(item) {
       const { error } = await sb.from("items").insert([item]);
       if (error) throw error;
     }
+
     async function deleteItemFromDB(id) {
       const { error } = await sb.from("items").delete().eq("id", id);
       if (error) throw error;
     }
+
     async function updateStatusInDB(id, newStatus) {
       const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
       if (error) throw error;
     }
 
-    // ====== LIST ======
     async function renderList() {
       showError(null);
-      itemsBody.innerHTML = "";
 
       const q = (search?.value ?? "").trim().toLowerCase();
+      itemsBody.innerHTML = "";
 
       let items = [];
       try {
@@ -243,14 +213,15 @@
 
       const filtered = items.filter(it =>
         (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
-          .toLowerCase().includes(q)
+          .toLowerCase()
+          .includes(q)
       );
 
       if (filtered.length === 0) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
         td.colSpan = 6;
-        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
+        td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi. Lisa esimene ese.";
         td.style.color = "#666";
         td.style.padding = "14px 10px";
         tr.appendChild(td);
@@ -270,7 +241,7 @@
             <div class="btnrow">
               <button type="button" data-qr="${it.id}">QR</button>
               <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
-              ${window.IS_EDIT_MODE ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
+              <button type="button" class="danger" data-del="${it.id}">Kustuta</button>
             </div>
           </td>
         `;
@@ -278,7 +249,6 @@
       }
     }
 
-    // ====== DETAIL ======
     async function renderDetail(id) {
       showError(null);
 
@@ -299,7 +269,7 @@
       if (!it) {
         detailView.innerHTML = `
           <h2>Ese ei leitud</h2>
-          <p class="muted">Selle ID-ga eset pole.</p>
+          <p class="muted">Selle ID-ga eset pole (või on see kustutatud).</p>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         `;
         detailView.style.display = "block";
@@ -322,37 +292,34 @@
         <div style="margin-top:12px;" class="btnrow">
           <button type="button" data-qr="${it.id}">Näita QR</button>
 
-          ${window.IS_EDIT_MODE ? `
-            <select id="detailStatus" style="max-width: 220px;">
-              <option value="Laos">Laos</option>
-              <option value="Väljas">Väljas</option>
-              <option value="Hoolduses">Hoolduses</option>
-            </select>
-            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
-          ` : ``}
+          <select id="detailStatus" style="max-width: 220px;">
+            <option value="Laos">Laos</option>
+            <option value="Väljas">Väljas</option>
+            <option value="Hoolduses">Hoolduses</option>
+          </select>
 
+          <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
           <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
         </div>
       `;
 
-      if (window.IS_EDIT_MODE) {
-        const sel = detailView.querySelector("#detailStatus");
-        sel.value = it.status || "Laos";
-        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
-          try {
-            await updateStatusInDB(id, sel.value);
-            await renderDetail(id);
-          } catch (e) {
-            alert("Ei saanud salvestada: " + (e?.message ?? e));
-          }
-        });
-      }
+      const sel = detailView.querySelector("#detailStatus");
+      sel.value = it.status || "Laos";
+
+      detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+        try {
+          await updateStatusInDB(id, sel.value);
+          await renderDetail(id);
+        } catch (e) {
+          alert("Ei saanud salvestada: " + (e?.message ?? e));
+        }
+      });
 
       detailView.style.display = "block";
       mainApp.style.display = "none";
     }
 
-    // ====== QR ======
+    // QR modal helpers
     function closeQR() {
       document.getElementById("qrModal").style.display = "none";
       document.getElementById("qrcode").innerHTML = "";
@@ -365,10 +332,15 @@
       document.getElementById("qrModal").style.display = "flex";
       document.getElementById("qrcode").innerHTML = "";
       document.getElementById("qrText").textContent = url;
-      new QRCode(document.getElementById("qrcode"), { text: url, width: 220, height: 220 });
+
+      new QRCode(document.getElementById("qrcode"), {
+        text: url,
+        width: 220,
+        height: 220
+      });
     }
 
-    // ====== EVENTS ======
+    // Global click handler for QR + delete
     document.addEventListener("click", async (e) => {
       const qrId = e.target?.dataset?.qr;
       const delId = e.target?.dataset?.del;
@@ -376,7 +348,6 @@
       if (qrId) openQRForId(qrId);
 
       if (delId) {
-        if (!window.IS_EDIT_MODE) return;
         const ok = confirm("Kustutan selle eseme?");
         if (!ok) return;
 
@@ -395,7 +366,6 @@
 
     form?.addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (!window.IS_EDIT_MODE) return alert("Luba haldusrežiim, et lisada.");
 
       const name = document.getElementById("name").value.trim();
       const qty = Number(document.getElementById("qty").value);
@@ -404,7 +374,13 @@
       const noteVal = document.getElementById("note").value.trim();
 
       try {
-        await addItemToDB({ name, qty, location: locationVal, status: statusVal, note: noteVal });
+        await addItemToDB({
+          name,
+          qty,
+          location: locationVal,
+          status: statusVal,
+          note: noteVal
+        });
 
         form.reset();
         document.getElementById("qty").value = 1;
@@ -419,10 +395,8 @@
     search?.addEventListener("input", () => renderList());
     refreshBtn?.addEventListener("click", () => renderList());
 
-    // ====== INIT ======
+    // Init: decide between list or detail view
     (async function init() {
-      updateModeUI();
-
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
 
