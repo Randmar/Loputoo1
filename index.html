@@ -5,17 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Inventari haldur</title>
 
-  <!-- Supabase client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- QR code library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <!-- jsPDF for PDF export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- SheetJS for Excel import/export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
+  <link rel="icon" href="data:,">
+
   <style>
-    body { font-family: system-ui, Arial; max-width: 1000px; margin: 40px auto; padding: 0 16px; }
+    body { font-family: system-ui, Arial; max-width: 1100px; margin: 40px auto; padding: 0 16px; }
     h1 { margin-bottom: 8px; }
     .muted { color: #666; margin-top: 0; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
@@ -38,24 +36,40 @@
     .hide { display:none !important; }
     code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
     .status { font-size: 13px; color:#444; }
+    .small { font-size:12px; color:#666; }
   </style>
 </head>
 
 <body>
   <h1>Inventari haldur</h1>
+  <p class="muted">Salvestab Supabase’i. Admin režiim koodiga. Veerud/pealkirjad on muudetavad.</p>
 
   <!-- ADMIN BAR -->
   <div class="card">
     <div class="toolbar">
       <div>
         <strong>Režiim:</strong> <span id="modeText">Külastaja</span>
+        <div class="small">Admin režiim on UI-koodiga (RLS OFF).</div>
       </div>
       <div class="btnrow">
-        <button class="light" type="button" onclick="window.enterAdmin()">Admin kood</button>
-        <button class="light" type="button" onclick="window.exitAdmin()">Välju administ</button>
+        <button class="light" type="button" onclick="enterAdmin()">Admin kood</button>
+        <button class="light" type="button" onclick="exitAdmin()">Välju administ</button>
       </div>
     </div>
     <div class="status" id="adminHint" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- SETTINGS (ADMIN) -->
+  <div class="card hide" id="settingsCard">
+    <div class="toolbar">
+      <h2 style="margin:0;">Seaded: veerud</h2>
+      <div class="btnrow">
+        <button class="light" type="button" id="addColBtn">Lisa veerg</button>
+        <button class="primary" type="button" id="saveColsBtn">Salvesta veerud</button>
+      </div>
+    </div>
+    <div class="small">Vihje: “key” on sisemine nimi (ei pea ilus olema). “label” on tabeli pealkiri.</div>
+    <div id="colsEditor" style="margin-top:12px;"></div>
   </div>
 
   <!-- Detail view -->
@@ -63,41 +77,12 @@
 
   <!-- Main app -->
   <div id="mainApp">
-
     <!-- ADD (ADMIN ONLY) -->
-    <div class="card" id="addCard">
+    <div class="card hide" id="addCard">
       <h2>Lisa ese (admin)</h2>
       <form id="itemForm">
-        <div class="row">
-          <div>
-            <label for="name">Nimi</label>
-            <input id="name" required placeholder="Nt. Sülearvuti" />
-          </div>
-          <div>
-            <label for="qty">Kogus</label>
-            <input id="qty" type="number" min="1" value="1" required />
-          </div>
-        </div>
-
-        <div class="row">
-          <div>
-            <label for="location">Asukoht</label>
-            <input id="location" placeholder="Nt. Ruum 203" />
-          </div>
-          <div>
-            <label for="status">Staatus</label>
-            <select id="status">
-              <option value="Laos">Laos</option>
-              <option value="Väljas">Väljas</option>
-              <option value="Hoolduses">Hoolduses</option>
-            </select>
-          </div>
-        </div>
-
-        <label for="note">Märkus (valikuline)</label>
-        <input id="note" placeholder="Nt. laadija puudu" />
-
-        <div style="margin-top: 12px;">
+        <div id="dynamicForm" class="row"></div>
+        <div style="margin-top:12px;">
           <button class="primary" type="submit">Lisa nimekirja</button>
         </div>
       </form>
@@ -107,27 +92,17 @@
     <div class="card">
       <div class="toolbar">
         <h2 style="margin:0;">Nimekiri</h2>
-        <input id="search" placeholder="Otsi nime/asukohta..." style="max-width: 280px;" />
+        <input id="search" placeholder="Otsi..." style="max-width: 280px;" />
       </div>
 
       <table>
-        <thead>
-          <tr>
-            <th>Nimi</th>
-            <th>Kogus</th>
-            <th>Asukoht</th>
-            <th>Staatus</th>
-            <th>Märkus</th>
-            <th></th>
-          </tr>
-        </thead>
+        <thead><tr id="theadRow"></tr></thead>
         <tbody id="itemsBody"></tbody>
       </table>
 
       <div class="btnrow" style="margin-top:12px;">
         <button id="refresh" type="button">Värskenda</button>
 
-        <!-- Excel -->
         <button id="exportXlsx" type="button">Ekspordi Excel</button>
         <button id="importXlsx" type="button">Impordi Excel</button>
         <input id="xlsxFile" type="file" accept=".xlsx,.xls" class="hide" />
@@ -138,37 +113,52 @@
     </div>
   </div>
 
-  <!-- QR modal -->
-  <div id="qrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); justify-content:center; align-items:center; padding: 18px;">
-    <div style="background:white; padding:20px; border-radius:12px; text-align:center; width:min(360px, 100%);">
-      <h3 style="margin-top:0;">QR kood</h3>
-      <div id="qrcode" style="display:flex; justify-content:center;"></div>
-      <p class="muted" id="qrText" style="font-size:12px; word-break: break-all;"></p>
-      <div class="btnrow" style="justify-content:center;">
+  <!-- QR modal (ONE button opens this; inside has PDF) -->
+  <div id="qrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); justify-content:center; align-items:center; padding:18px;">
+    <div style="background:white; padding:20px; border-radius:12px; width:min(380px, 100%);">
+      <div class="toolbar">
+        <h3 style="margin:0;">QR kood</h3>
         <button class="light" type="button" onclick="closeQR()">Sulge</button>
       </div>
+      <div id="qrcode" style="display:flex; justify-content:center; margin-top:12px;"></div>
+      <p class="muted" id="qrText" style="font-size:12px; word-break: break-all; margin-bottom:10px;"></p>
+      <div class="btnrow" style="justify-content:center;">
+        <button class="primary" type="button" id="qrPdfBtn">Lae PDF (2×2 cm)</button>
+      </div>
+      <p class="small" style="text-align:center; margin-bottom:0;">PDF leht = 20mm × 20mm</p>
     </div>
   </div>
 
-  <!-- hidden QR render area for PDF -->
   <div id="qrHidden" class="hide"></div>
 
   <script>
-    // ====== CONFIG ======
-    const SUPABASE_URL = "https://nakebsozkrmfcmnxviob.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ha2Vic296a3JtZmNtbnh2aW9iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MDI5NjYsImV4cCI6MjA4NjQ3ODk2Nn0.soSJd6NGoxep8eiPBZSdhmVCYcYqFZb9_iQtY5V6jdE";
+    // ===== CONFIG =====
+    const SUPABASE_URL = "PASTE_SUPABASE_PROJECT_URL";
+    const SUPABASE_ANON_KEY = "PASTE_SUPABASE_ANON_PUBLIC_KEY";
     const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // ADMIN code (UI only)
-    const ADMIN_CODE = "1234"; // MUUDA OMAKS
-    const ADMIN_SESSION_KEY = "inv_admin_mode_v1";
+    const ADMIN_CODE = "1234";              // MUUDA OMAKS
+    const ADMIN_SESSION_KEY = "inv_admin_mode_v2";
 
-    // ====== UI refs ======
+    // ===== STATE =====
+    let IS_ADMIN = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
+    let COLUMNS = []; // loaded from app_config.columns
+    let CURRENT_QR_ID = null;
+
+    // ===== UI refs =====
     const modeText = document.getElementById("modeText");
     const adminHint = document.getElementById("adminHint");
     const addCard = document.getElementById("addCard");
+    const settingsCard = document.getElementById("settingsCard");
+
+    const colsEditor = document.getElementById("colsEditor");
+    const addColBtn = document.getElementById("addColBtn");
+    const saveColsBtn = document.getElementById("saveColsBtn");
 
     const form = document.getElementById("itemForm");
+    const dynamicForm = document.getElementById("dynamicForm");
+
+    const theadRow = document.getElementById("theadRow");
     const itemsBody = document.getElementById("itemsBody");
     const search = document.getElementById("search");
     const refreshBtn = document.getElementById("refresh");
@@ -182,115 +172,308 @@
     const mainApp = document.getElementById("mainApp");
     const detailView = document.getElementById("detailView");
 
-    let IS_ADMIN = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
+    const qrModal = document.getElementById("qrModal");
+    const qrPdfBtn = document.getElementById("qrPdfBtn");
 
-    function setMessage(text) {
-      if (!text) { msgEl.style.display = "none"; msgEl.textContent = ""; return; }
-      msgEl.style.display = "block";
-      msgEl.textContent = text;
-    }
-    function showError(msg) {
-      if (!msg) { errEl.style.display = "none"; errEl.textContent = ""; return; }
-      errEl.style.display = "block";
-      errEl.textContent = msg;
-    }
-    function escapeHtml(str) {
-      return String(str).replace(/[&<>"']/g, s => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-      }[s]));
-    }
-    function baseUrl() {
-      return location.origin + location.pathname.replace(/\/$/, "") + "/";
-    }
-    function itemUrl(id) {
-      return baseUrl() + "?id=" + encodeURIComponent(id);
-    }
+    function showError(msg){ errEl.style.display = msg ? "block":"none"; errEl.textContent = msg || ""; }
+    function setMessage(msg){ msgEl.style.display = msg ? "block":"none"; msgEl.textContent = msg || ""; }
+    function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[s])); }
 
-    function updateAdminUI() {
+    function baseUrl(){ return location.origin + location.pathname.replace(/\/$/, "") + "/"; }
+    function itemUrl(id){ return baseUrl() + "?id=" + encodeURIComponent(id); }
+
+    function updateAdminUI(){
       modeText.textContent = IS_ADMIN ? "Admin" : "Külastaja";
-      addCard.style.display = IS_ADMIN ? "block" : "none";
-      adminHint.textContent = IS_ADMIN
-        ? "Admin režiim ON (saad lisada/kustutada/muuta)."
-        : "Külastaja režiim (ainult vaatamine).";
+      addCard.classList.toggle("hide", !IS_ADMIN);
+      settingsCard.classList.toggle("hide", !IS_ADMIN);
+      adminHint.textContent = IS_ADMIN ? "Admin režiim ON." : "Külastaja režiim (ainult vaatamine).";
     }
 
-    window.enterAdmin = function () {
+    window.enterAdmin = function(){
       const code = prompt("Sisesta admin kood:");
-      if (code === ADMIN_CODE) {
+      if (code === ADMIN_CODE){
         IS_ADMIN = true;
         sessionStorage.setItem(ADMIN_SESSION_KEY, "1");
         updateAdminUI();
+        renderColumnsUI();
         renderList();
-      } else {
-        alert("Vale kood.");
-      }
+      } else alert("Vale kood.");
     };
 
-    window.exitAdmin = function () {
+    window.exitAdmin = function(){
       IS_ADMIN = false;
       sessionStorage.removeItem(ADMIN_SESSION_KEY);
       updateAdminUI();
+      renderColumnsUI();
       renderList();
-      // detail vaates uuesti render, et admin nupud kaoks
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
       if (id) renderDetail(id);
     };
 
-    // ====== DB ======
-    async function loadItemsFromDB() {
-      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending: false });
+    // ===== CONFIG in DB =====
+    async function loadConfig(){
+      const { data, error } = await sb.from("app_config").select("columns").eq("id", 1).maybeSingle();
+      if (error) throw error;
+      COLUMNS = (data?.columns ?? []).map(x => ({
+        key: String(x.key || "").trim(),
+        label: String(x.label || x.key || "").trim(),
+        type: x.type || "text",
+        required: !!x.required,
+        options: Array.isArray(x.options) ? x.options : undefined
+      })).filter(c => c.key);
+
+      // ensure we always have at least name
+      if (!COLUMNS.some(c => c.key === "name")){
+        COLUMNS.unshift({ key:"name", label:"Nimi", type:"text", required:true });
+      }
+    }
+
+    async function saveConfig(columns){
+      const clean = columns
+        .map(c => ({
+          key: String(c.key||"").trim(),
+          label: String(c.label||c.key||"").trim(),
+          type: c.type || "text",
+          required: !!c.required,
+          options: c.type === "select" ? (c.options || ["Laos","Väljas","Hoolduses"]) : undefined
+        }))
+        .filter(c => c.key);
+
+      // enforce name
+      if (!clean.some(c => c.key === "name")){
+        clean.unshift({ key:"name", label:"Nimi", type:"text", required:true });
+      }
+
+      const { error } = await sb.from("app_config")
+        .upsert({ id: 1, columns: clean, updated_at: new Date().toISOString() }, { onConflict: "id" });
+      if (error) throw error;
+
+      COLUMNS = clean;
+    }
+
+    // ===== DB items (dynamic in data jsonb) =====
+    async function loadItemsFromDB(){
+      const { data, error } = await sb.from("items").select("*").order("created_at", { ascending:false });
       if (error) throw error;
       return data ?? [];
     }
 
-    async function getItemFromDB(id) {
+    async function getItemFromDB(id){
       const { data, error } = await sb.from("items").select("*").eq("id", id).maybeSingle();
       if (error) throw error;
       return data;
     }
 
-    async function addItemToDB(item) {
-      const { error } = await sb.from("items").insert([item]);
+    function itemToDataRow(dbRow){
+      // prefer jsonb data, fallback to legacy columns if needed
+      const d = dbRow?.data && typeof dbRow.data === "object" ? dbRow.data : {};
+      const merged = { ...d };
+
+      // fallback legacy fields
+      if (dbRow?.name && !merged.name) merged.name = dbRow.name;
+      if (dbRow?.qty != null && merged.qty == null) merged.qty = dbRow.qty;
+      if (dbRow?.location && !merged.location) merged.location = dbRow.location;
+      if (dbRow?.status && !merged.status) merged.status = dbRow.status;
+      if (dbRow?.note && !merged.note) merged.note = dbRow.note;
+
+      return merged;
+    }
+
+    async function addItemToDB(dataObj){
+      // keep name also in top-level for easier viewing/searching later
+      const name = String(dataObj.name || "").trim();
+      const payload = { name, data: dataObj };
+      const { error } = await sb.from("items").insert([payload]);
       if (error) throw error;
     }
 
-    async function deleteItemFromDB(id) {
+    async function updateItemDataInDB(id, partial){
+      const row = await getItemFromDB(id);
+      const current = itemToDataRow(row);
+      const next = { ...current, ...partial };
+      const name = String(next.name || "").trim();
+      const { error } = await sb.from("items").update({ name, data: next }).eq("id", id);
+      if (error) throw error;
+    }
+
+    async function deleteItemFromDB(id){
       const { error } = await sb.from("items").delete().eq("id", id);
       if (error) throw error;
     }
 
-    async function updateStatusInDB(id, newStatus) {
-      const { error } = await sb.from("items").update({ status: newStatus }).eq("id", id);
-      if (error) throw error;
-    }
+    // ===== UI: columns editor + dynamic form =====
+    function renderColumnsUI(){
+      // table headers
+      theadRow.innerHTML = "";
+      for (const col of COLUMNS){
+        const th = document.createElement("th");
+        th.textContent = col.label || col.key;
+        theadRow.appendChild(th);
+      }
+      const thActions = document.createElement("th");
+      thActions.textContent = "";
+      theadRow.appendChild(thActions);
 
-    // ====== LIST ======
-    async function renderList() {
-      showError(null);
-      setMessage(null);
-      itemsBody.innerHTML = "";
+      // dynamic add form
+      dynamicForm.innerHTML = "";
+      // 2 columns layout for form
+      dynamicForm.style.gridTemplateColumns = "1fr 1fr";
+      for (const col of COLUMNS){
+        // in form, skip non-admin? no, admin can input all fields
+        const wrap = document.createElement("div");
 
-      const q = (search?.value ?? "").trim().toLowerCase();
+        const lab = document.createElement("label");
+        lab.textContent = col.label || col.key;
+        wrap.appendChild(lab);
 
-      let items = [];
-      try {
-        items = await loadItemsFromDB();
-      } catch (e) {
-        showError("DB viga: " + (e?.message ?? e));
-        return;
+        let inp;
+        if (col.type === "select"){
+          inp = document.createElement("select");
+          const opts = col.options || ["Laos","Väljas","Hoolduses"];
+          for (const o of opts){
+            const op = document.createElement("option");
+            op.value = o;
+            op.textContent = o;
+            inp.appendChild(op);
+          }
+        } else {
+          inp = document.createElement("input");
+          inp.type = col.type === "number" ? "number" : "text";
+        }
+        inp.id = "f_" + col.key;
+        if (col.required) inp.required = true;
+        wrap.appendChild(inp);
+        dynamicForm.appendChild(wrap);
       }
 
-      const filtered = items.filter(it =>
-        (it.name + " " + (it.location ?? "") + " " + (it.status ?? "") + " " + (it.note ?? ""))
-          .toLowerCase()
-          .includes(q)
-      );
+      // admin columns editor
+      if (!IS_ADMIN) { colsEditor.innerHTML = ""; return; }
 
-      if (filtered.length === 0) {
+      colsEditor.innerHTML = "";
+      const container = document.createElement("div");
+      container.style.display = "grid";
+      container.style.gap = "10px";
+
+      COLUMNS.forEach((c, idx) => {
+        const row = document.createElement("div");
+        row.style.border = "1px solid #eee";
+        row.style.borderRadius = "12px";
+        row.style.padding = "12px";
+
+        row.innerHTML = `
+          <div class="row">
+            <div>
+              <label>Key (sisemine)</label>
+              <input data-colkey="${idx}" data-field="key" value="${escapeHtml(c.key)}" ${c.key==="name" ? "disabled": ""}/>
+            </div>
+            <div>
+              <label>Pealkiri (label)</label>
+              <input data-colkey="${idx}" data-field="label" value="${escapeHtml(c.label || c.key)}" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Tüüp</label>
+              <select data-colkey="${idx}" data-field="type" ${c.key==="name" ? "disabled": ""}>
+                <option value="text" ${c.type==="text"?"selected":""}>text</option>
+                <option value="number" ${c.type==="number"?"selected":""}>number</option>
+                <option value="select" ${c.type==="select"?"selected":""}>select</option>
+              </select>
+            </div>
+            <div>
+              <label>Kohustuslik</label>
+              <select data-colkey="${idx}" data-field="required" ${c.key==="name" ? "disabled": ""}>
+                <option value="false" ${!c.required?"selected":""}>Ei</option>
+                <option value="true" ${c.required?"selected":""}>Jah</option>
+              </select>
+            </div>
+          </div>
+          <div class="small">${c.key==="name" ? "Nimi (name) peab alati olemas olema." : ""}</div>
+          <div class="btnrow" style="margin-top:10px;">
+            ${c.key!=="name" ? `<button type="button" class="light" data-moveup="${idx}">Üles</button>
+                               <button type="button" class="light" data-movedown="${idx}">Alla</button>
+                               <button type="button" class="danger" data-delcol="${idx}">Kustuta veerg</button>` : ``}
+          </div>
+        `;
+        container.appendChild(row);
+      });
+
+      colsEditor.appendChild(container);
+    }
+
+    addColBtn.addEventListener("click", () => {
+      if (!IS_ADMIN) return;
+      const key = prompt("Uue veeru key (nt serial, owner, category):");
+      if (!key) return;
+      const cleanKey = slugify(key);
+      if (!cleanKey) return alert("Vale key.");
+      if (COLUMNS.some(c => c.key === cleanKey)) return alert("Selline key on juba olemas.");
+
+      const label = prompt("Pealkiri (label):", key) || key;
+      COLUMNS.push({ key: cleanKey, label, type:"text", required:false });
+      renderColumnsUI();
+    });
+
+    saveColsBtn.addEventListener("click", async () => {
+      if (!IS_ADMIN) return;
+
+      // read back from editor inputs
+      const next = COLUMNS.map(c => ({...c}));
+      document.querySelectorAll("[data-colkey]").forEach(el => {
+        const idx = Number(el.getAttribute("data-colkey"));
+        const field = el.getAttribute("data-field");
+        if (!Number.isFinite(idx) || !field) return;
+
+        let v = el.value;
+        if (field === "key") v = slugify(v);
+        if (field === "required") v = (v === "true");
+        next[idx][field] = v;
+      });
+
+      // enforce name column presence
+      if (!next.some(c => c.key === "name")) next.unshift({ key:"name", label:"Nimi", type:"text", required:true });
+
+      try {
+        await saveConfig(next);
+        setMessage("Salvestatud ✅");
+        renderColumnsUI();
+        renderList();
+      } catch (e) {
+        alert("Ei saanud salvestada: " + (e?.message ?? e));
+      }
+    });
+
+    function slugify(s){
+      return String(s||"")
+        .trim()
+        .toLowerCase()
+        .replace(/õ/g,"o").replace(/ä/g,"a").replace(/ö/g,"o").replace(/ü/g,"u")
+        .replace(/[^a-z0-9_]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40);
+    }
+
+    // ===== LIST + DETAIL =====
+    async function renderList(){
+      showError(null); setMessage(null);
+      itemsBody.innerHTML = "";
+
+      let items = [];
+      try { items = await loadItemsFromDB(); }
+      catch(e){ showError("DB viga: " + (e?.message ?? e)); return; }
+
+      const q = (search.value || "").trim().toLowerCase();
+      const filtered = items.filter(r => {
+        const d = itemToDataRow(r);
+        const blob = JSON.stringify(d).toLowerCase();
+        return blob.includes(q);
+      });
+
+      if (filtered.length === 0){
         const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = 6;
+        td.colSpan = COLUMNS.length + 1;
         td.textContent = q ? "Tulemusi ei leitud." : "Nimekiri on tühi.";
         td.style.color = "#666";
         td.style.padding = "14px 10px";
@@ -299,93 +482,128 @@
         return;
       }
 
-      for (const it of filtered) {
+      for (const row of filtered){
+        const data = itemToDataRow(row);
+
         const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${escapeHtml(it.name)}</td>
-          <td>${it.qty ?? 1}</td>
-          <td>${escapeHtml(it.location || "-")}</td>
-          <td><span class="pill">${escapeHtml(it.status || "-")}</span></td>
-          <td>${escapeHtml(it.note || "-")}</td>
+        let html = "";
+        for (const col of COLUMNS){
+          let v = data[col.key];
+          if (v == null || v === "") v = "-";
+          html += `<td>${escapeHtml(v)}</td>`;
+        }
+
+        html += `
           <td>
             <div class="btnrow">
-              <button type="button" data-qr="${it.id}">QR</button>
-              <button type="button" data-qpdf="${it.id}" data-name="${escapeHtml(it.name)}">QR PDF (2×2cm)</button>
-              <a href="${itemUrl(it.id)}"><button type="button" class="light">Ava</button></a>
-              ${IS_ADMIN ? `<button type="button" class="danger" data-del="${it.id}">Kustuta</button>` : ``}
+              <button type="button" data-qr="${row.id}">QR</button>
+              <a href="${itemUrl(row.id)}"><button type="button" class="light">Ava</button></a>
+              ${IS_ADMIN ? `<button type="button" class="danger" data-del="${row.id}">Kustuta</button>` : ``}
             </div>
           </td>
         `;
+        tr.innerHTML = html;
         itemsBody.appendChild(tr);
       }
     }
 
-    // ====== DETAIL ======
-    async function renderDetail(id) {
-      showError(null);
-      setMessage(null);
+    async function renderDetail(id){
+      showError(null); setMessage(null);
 
-      let it = null;
-      try {
-        it = await getItemFromDB(id);
-      } catch (e) {
-        detailView.innerHTML = `
-          <h2>DB viga</h2>
-          <p class="muted">${escapeHtml(e?.message ?? String(e))}</p>
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
-        `;
-        detailView.style.display = "block";
-        mainApp.style.display = "none";
-        return;
+      let row = null;
+      try { row = await getItemFromDB(id); }
+      catch(e){
+        detailView.innerHTML = `<h2>DB viga</h2><p class="muted">${escapeHtml(e?.message ?? e)}</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi</button></a>`;
+        detailView.style.display = "block"; mainApp.style.display = "none"; return;
       }
 
-      if (!it) {
-        detailView.innerHTML = `
-          <h2>Ese ei leitud</h2>
-          <p class="muted">Selle ID-ga eset pole (või on kustutatud).</p>
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
-        `;
-        detailView.style.display = "block";
-        mainApp.style.display = "none";
-        return;
+      if (!row){
+        detailView.innerHTML = `<h2>Ese ei leitud</h2><p class="muted">Selle ID-ga eset pole.</p>
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi</button></a>`;
+        detailView.style.display = "block"; mainApp.style.display = "none"; return;
       }
+
+      const d = itemToDataRow(row);
+
+      // render key/value detail from columns
+      const kv = COLUMNS.map(c => `
+        <div class="k">${escapeHtml(c.label || c.key)}</div><div>${escapeHtml(d[c.key] ?? "-")}</div>
+      `).join("");
 
       detailView.innerHTML = `
-        <h2>${escapeHtml(it.name)}</h2>
-        <p class="muted">Eseme detailvaade (QR-kood suunab siia).</p>
+        <h2>${escapeHtml(d.name || row.name || "Ese")}</h2>
+        <p class="muted">Detailvaade (QR suunab siia).</p>
 
-        <div class="kvd">
-          <div class="k">ID</div><div>${escapeHtml(it.id)}</div>
-          <div class="k">Kogus</div><div>${it.qty ?? 1}</div>
-          <div class="k">Asukoht</div><div>${escapeHtml(it.location || "-")}</div>
-          <div class="k">Staatus</div><div><span class="pill">${escapeHtml(it.status || "-")}</span></div>
-          <div class="k">Märkus</div><div>${escapeHtml(it.note || "-")}</div>
-        </div>
+        <div class="kvd">${kv}</div>
 
         <div style="margin-top:12px;" class="btnrow">
-          <button type="button" data-qr="${it.id}">Näita QR</button>
-          <button type="button" data-qpdf="${it.id}" data-name="${escapeHtml(it.name)}">QR PDF (2×2cm)</button>
+          <button type="button" data-qr="${row.id}">QR</button>
+          ${IS_ADMIN ? `<button type="button" class="primary" id="editBtn">Muuda välju</button>` : ``}
+          <a href="${baseUrl()}"><button type="button" class="light">Tagasi</button></a>
+        </div>
 
-          ${IS_ADMIN ? `
-            <select id="detailStatus" style="max-width: 220px;">
-              <option value="Laos">Laos</option>
-              <option value="Väljas">Väljas</option>
-              <option value="Hoolduses">Hoolduses</option>
-            </select>
-            <button type="button" class="primary" id="saveStatus">Salvesta staatus</button>
-          ` : ``}
-
-          <a href="${baseUrl()}"><button type="button" class="light">Tagasi nimekirja</button></a>
+        <div id="editBox" class="card hide" style="margin-top:12px;">
+          <h3 style="margin-top:0;">Muuda (admin)</h3>
+          <div id="editForm" class="row"></div>
+          <div class="btnrow" style="margin-top:12px;">
+            <button type="button" class="primary" id="saveEdit">Salvesta</button>
+            <button type="button" class="light" id="cancelEdit">Tühista</button>
+          </div>
         </div>
       `;
 
-      if (IS_ADMIN) {
-        const sel = detailView.querySelector("#detailStatus");
-        sel.value = it.status || "Laos";
-        detailView.querySelector("#saveStatus").addEventListener("click", async () => {
+      if (IS_ADMIN){
+        const editBtn = detailView.querySelector("#editBtn");
+        const editBox = detailView.querySelector("#editBox");
+        const editForm = detailView.querySelector("#editForm");
+
+        editBtn.addEventListener("click", () => {
+          editBox.classList.remove("hide");
+          editForm.innerHTML = "";
+          for (const col of COLUMNS){
+            const wrap = document.createElement("div");
+            const lab = document.createElement("label");
+            lab.textContent = col.label || col.key;
+            wrap.appendChild(lab);
+
+            let inp;
+            if (col.type === "select"){
+              inp = document.createElement("select");
+              const opts = col.options || ["Laos","Väljas","Hoolduses"];
+              for (const o of opts){
+                const op = document.createElement("option");
+                op.value = o; op.textContent = o;
+                inp.appendChild(op);
+              }
+              inp.value = d[col.key] ?? opts[0];
+            } else {
+              inp = document.createElement("input");
+              inp.type = col.type === "number" ? "number" : "text";
+              inp.value = d[col.key] ?? "";
+            }
+            inp.id = "e_" + col.key;
+            if (col.required) inp.required = true;
+            wrap.appendChild(inp);
+            editForm.appendChild(wrap);
+          }
+        });
+
+        detailView.querySelector("#cancelEdit").addEventListener("click", () => editBox.classList.add("hide"));
+
+        detailView.querySelector("#saveEdit").addEventListener("click", async () => {
+          const partial = {};
+          for (const col of COLUMNS){
+            const el = detailView.querySelector("#e_" + col.key);
+            if (!el) continue;
+            let v = el.value;
+            if (col.type === "number") v = Number(v || 0) || 0;
+            if (col.required && (!v && v !== 0)) return alert("Täida kohustuslik väli: " + (col.label || col.key));
+            partial[col.key] = v;
+          }
           try {
-            await updateStatusInDB(id, sel.value);
-            await renderDetail(id);
+            await updateItemDataInDB(row.id, partial);
+            await renderDetail(row.id);
           } catch (e) {
             alert("Ei saanud salvestada: " + (e?.message ?? e));
           }
@@ -396,259 +614,300 @@
       mainApp.style.display = "none";
     }
 
-    // ====== QR modal ======
-    function closeQR() {
-      document.getElementById("qrModal").style.display = "none";
+    // ===== ONE QR button -> modal with PDF =====
+    function closeQR(){
+      qrModal.style.display = "none";
       document.getElementById("qrcode").innerHTML = "";
       document.getElementById("qrText").textContent = "";
+      CURRENT_QR_ID = null;
     }
     window.closeQR = closeQR;
 
-    function openQRForId(id) {
+    function openQR(id){
+      CURRENT_QR_ID = id;
       const url = itemUrl(id);
-      document.getElementById("qrModal").style.display = "flex";
+      qrModal.style.display = "flex";
       document.getElementById("qrcode").innerHTML = "";
       document.getElementById("qrText").textContent = url;
-
-      new QRCode(document.getElementById("qrcode"), {
-        text: url,
-        width: 220,
-        height: 220
-      });
+      new QRCode(document.getElementById("qrcode"), { text:url, width:220, height:220 });
     }
 
-    // ====== QR -> PDF (2x2 cm) ======
-    async function downloadQrPdf2x2cm(id, nameForFile) {
+    async function downloadQrPdf2x2cm(id){
       const url = itemUrl(id);
-
-      // render QR to hidden container as canvas
       const box = document.getElementById("qrHidden");
       box.innerHTML = "";
       box.classList.remove("hide");
-
-      new QRCode(box, { text: url, width: 256, height: 256 });
-
-      // Wait a tick for canvas to appear
+      new QRCode(box, { text:url, width:256, height:256 });
       await new Promise(r => setTimeout(r, 60));
-
       const canvas = box.querySelector("canvas");
-      if (!canvas) {
-        box.classList.add("hide");
-        throw new Error("QR canvas ei tekkinud.");
-      }
-
+      if (!canvas){ box.classList.add("hide"); throw new Error("QR canvas ei tekkinud."); }
       const imgData = canvas.toDataURL("image/png");
 
-      // Create PDF exactly 20mm x 20mm
       const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit: "mm", format: [20, 20] });
-
-      // Fill the page (0 margin) with QR
+      const doc = new jsPDF({ unit:"mm", format:[20,20] });
       doc.addImage(imgData, "PNG", 0, 0, 20, 20);
-
-      const safeName = (nameForFile || id).toString().replace(/[\\/:*?"<>|]+/g, "_");
-      doc.save(`${safeName}_QR_2x2cm.pdf`);
+      doc.save(`QR_${id}_2x2cm.pdf`);
 
       box.classList.add("hide");
       box.innerHTML = "";
     }
 
-    // ====== Excel import/export ======
-    function normalizeHeader(h) {
-      return String(h || "").trim().toLowerCase();
-    }
+    qrPdfBtn.addEventListener("click", async () => {
+      if (!CURRENT_QR_ID) return;
+      try { await downloadQrPdf2x2cm(CURRENT_QR_ID); }
+      catch(e){ alert("PDF viga: " + (e?.message ?? e)); }
+    });
 
-    function mapRowToItem(rowObj) {
-      // accept both EN and ET headers
-      const keys = Object.keys(rowObj);
-      const get = (...names) => {
-        for (const n of names) {
-          const k = keys.find(k => normalizeHeader(k) === normalizeHeader(n));
-          if (k != null) return rowObj[k];
-        }
-        return "";
-      };
-
-      const name = String(get("name", "nimi")).trim();
-      if (!name) return null;
-
-      const qtyRaw = get("qty", "quantity", "kogus");
-      const qty = Number(qtyRaw || 1) || 1;
-
-      const location = String(get("location", "asukoht")).trim();
-      const status = String(get("status", "staatus")).trim() || "Laos";
-      const note = String(get("note", "märkus", "markus")).trim();
-
-      return { name, qty, location, status, note };
-    }
-
-    async function importExcelFile(file) {
-      if (!IS_ADMIN) { alert("Impordiks pead olema admin režiimis."); return; }
-
-      setMessage("Loen Excelit...");
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: "array" });
-
-      const sheetName = wb.SheetNames[0];
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-      const items = [];
-      for (const r of rows) {
-        const it = mapRowToItem(r);
-        if (it) items.push(it);
-      }
-
-      if (items.length === 0) {
-        setMessage(null);
-        alert("Ei leidnud ühtegi rida. Veendu, et on veerud nagu: name/qty/location/status/note (või eesti keeles).");
-        return;
-      }
-
-      // Insert in batches
-      setMessage(`Impordin... (kokku ${items.length} rida)`);
-      const batchSize = 100;
-
-      try {
-        for (let i = 0; i < items.length; i += batchSize) {
-          const batch = items.slice(i, i + batchSize);
-          const { error } = await sb.from("items").insert(batch);
-          if (error) throw error;
-          setMessage(`Impordin... ${Math.min(i + batchSize, items.length)}/${items.length}`);
-        }
-      } catch (e) {
-        setMessage(null);
-        alert("Import ebaõnnestus: " + (e?.message ?? e));
-        return;
-      }
-
-      setMessage("Import valmis ✅");
-      await renderList();
-    }
-
-    async function exportExcel() {
+    // ===== Excel import/export (no “riidlemist”) =====
+    async function exportExcel(){
       setMessage("Ekspordin Excelit...");
-      let items = [];
-      try {
-        items = await loadItemsFromDB();
-      } catch (e) {
-        setMessage(null);
-        alert("Ei saanud andmeid: " + (e?.message ?? e));
-        return;
-      }
+      let rows = [];
+      try { rows = await loadItemsFromDB(); }
+      catch(e){ setMessage(null); return alert("Ei saa andmeid: " + (e?.message ?? e)); }
 
-      const out = items.map(it => ({
-        id: it.id,
-        name: it.name,
-        qty: it.qty ?? 1,
-        location: it.location ?? "",
-        status: it.status ?? "",
-        note: it.note ?? "",
-        created_at: it.created_at ?? ""
-      }));
+      const out = rows.map(r => itemToDataRow(r));
+      // use current labels as headers by mapping keys->labels (but store keys as first row too)
+      const headerMap = {};
+      for (const c of COLUMNS) headerMap[c.key] = c.label || c.key;
 
-      const ws = XLSX.utils.json_to_sheet(out);
+      const shaped = out.map(o => {
+        const row = {};
+        for (const c of COLUMNS){
+          row[headerMap[c.key]] = o[c.key] ?? "";
+        }
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(shaped);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "items");
       XLSX.writeFile(wb, "inventar.xlsx");
       setMessage(null);
     }
 
-    // ====== events ======
+    function ensureColumnsForHeaders(headers){
+      // headers: array of strings from Excel; for each header add column if missing
+      // map header -> key using slugify, but preserve label as original header
+      const existingLabels = new Set(COLUMNS.map(c => (c.label||"").toLowerCase()));
+      const existingKeys = new Set(COLUMNS.map(c => c.key));
+
+      const added = [];
+      for (const h of headers){
+        const label = String(h||"").trim();
+        if (!label) continue;
+        const low = label.toLowerCase();
+
+        // if label already exists, skip
+        if (existingLabels.has(low)) continue;
+
+        let key = slugify(label);
+        if (!key) continue;
+        // ensure unique key
+        let k2 = key, n = 2;
+        while (existingKeys.has(k2)) { k2 = key + "_" + n++; }
+        key = k2;
+
+        COLUMNS.push({ key, label, type:"text", required:false });
+        existingLabels.add(low);
+        existingKeys.add(key);
+        added.push(label);
+      }
+      return added;
+    }
+
+    async function importExcelFile(file){
+      if (!IS_ADMIN) return alert("Impordiks pead olema admin režiimis.");
+
+      setMessage("Loen Excelit...");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+
+      // read as 2D array to keep original headers
+      const arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      if (!arr || arr.length < 2) { setMessage(null); return alert("Excel on tühi."); }
+
+      const headers = arr[0].map(h => String(h||"").trim());
+      // if no "name" style header exists, we’ll still accept and use first column as name
+      const added = ensureColumnsForHeaders(headers);
+
+      // Save updated columns to DB (so table won’t “riidle” next time)
+      try {
+        await saveConfig(COLUMNS);
+      } catch (e) {
+        setMessage(null);
+        return alert("Ei saanud veerge salvestada: " + (e?.message ?? e));
+      }
+
+      renderColumnsUI();
+
+      // build rows
+      const items = [];
+      for (let i = 1; i < arr.length; i++){
+        const rowArr = arr[i];
+        const obj = {};
+        for (let j = 0; j < headers.length; j++){
+          const label = headers[j];
+          if (!label) continue;
+
+          // find column by label match; if not found, fallback by slug key
+          const col = COLUMNS.find(c => (c.label||"").toLowerCase() === label.toLowerCase())
+                   || COLUMNS.find(c => c.key === slugify(label));
+          if (!col) continue;
+
+          obj[col.key] = rowArr[j];
+        }
+
+        // ensure name exists
+        if (!obj.name || String(obj.name).trim() === ""){
+          // use first column value as name fallback
+          obj.name = String(rowArr[0] ?? "").trim();
+        }
+        if (!obj.name) continue;
+
+        // coerce number types
+        for (const c of COLUMNS){
+          if (c.type === "number" && obj[c.key] != null && obj[c.key] !== ""){
+            obj[c.key] = Number(obj[c.key]) || 0;
+          }
+          if (c.type === "select" && obj[c.key] == null){
+            const opts = c.options || ["Laos","Väljas","Hoolduses"];
+            obj[c.key] = opts[0];
+          }
+        }
+
+        items.push(obj);
+      }
+
+      if (items.length === 0) { setMessage(null); return alert("Ei leidnud ühtegi sobivat rida (name puudu)."); }
+
+      setMessage(`Impordin ${items.length} rida...`);
+      const batchSize = 100;
+      try {
+        for (let i = 0; i < items.length; i += batchSize){
+          const batch = items.slice(i, i + batchSize);
+          const payload = batch.map(o => ({ name: String(o.name).trim(), data: o }));
+          const { error } = await sb.from("items").insert(payload);
+          if (error) throw error;
+          setMessage(`Impordin... ${Math.min(i+batchSize, items.length)}/${items.length}`);
+        }
+      } catch (e) {
+        setMessage(null);
+        return alert("Import ebaõnnestus: " + (e?.message ?? e));
+      }
+
+      setMessage(added.length ? `Import valmis ✅ (lisatud veerud: ${added.join(", ")})` : "Import valmis ✅");
+      await renderList();
+    }
+
+    // ===== events =====
     document.addEventListener("click", async (e) => {
       const qrId = e.target?.dataset?.qr;
       const delId = e.target?.dataset?.del;
-      const qpdfId = e.target?.dataset?.qpdf;
 
-      if (qrId) openQRForId(qrId);
+      if (qrId) openQR(qrId);
 
-      if (qpdfId) {
-        try {
-          const nm = e.target?.dataset?.name || qpdfId;
-          await downloadQrPdf2x2cm(qpdfId, nm);
-        } catch (err) {
-          alert("PDF tegemine ebaõnnestus: " + (err?.message ?? err));
-        }
-      }
-
-      if (delId) {
+      if (delId){
         if (!IS_ADMIN) return alert("Kustutamiseks pead olema admin režiimis.");
-        const ok = confirm("Kustutan selle eseme?");
-        if (!ok) return;
-
+        if (!confirm("Kustutan selle eseme?")) return;
         try {
           await deleteItemFromDB(delId);
           const params = new URLSearchParams(location.search);
           if (params.get("id") === delId) location.href = baseUrl();
           else await renderList();
-        } catch (err) {
-          alert("Kustutamine ebaõnnestus: " + (err?.message ?? err));
+        } catch(e) {
+          alert("Kustutamine ebaõnnestus: " + (e?.message ?? e));
         }
       }
 
       if (e.target?.id === "qrModal") closeQR();
+
+      // column editor move/delete
+      const up = e.target?.dataset?.moveup;
+      const down = e.target?.dataset?.movedown;
+      const delcol = e.target?.dataset?.delcol;
+
+      if (up != null){
+        const i = Number(up);
+        if (i > 0){
+          const c = COLUMNS[i];
+          COLUMNS.splice(i,1);
+          COLUMNS.splice(i-1,0,c);
+          renderColumnsUI();
+        }
+      }
+      if (down != null){
+        const i = Number(down);
+        if (i < COLUMNS.length-1){
+          const c = COLUMNS[i];
+          COLUMNS.splice(i,1);
+          COLUMNS.splice(i+1,0,c);
+          renderColumnsUI();
+        }
+      }
+      if (delcol != null){
+        const i = Number(delcol);
+        if (COLUMNS[i]?.key === "name") return;
+        if (!confirm("Kustutan veeru (see ei kustuta vanu andmeid DB-st, ainult peidab)?")) return;
+        COLUMNS.splice(i,1);
+        renderColumnsUI();
+      }
     });
 
     form?.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!IS_ADMIN) return alert("Lisamiseks pead olema admin režiimis.");
 
-      const name = document.getElementById("name").value.trim();
-      const qty = Number(document.getElementById("qty").value);
-      const locationVal = document.getElementById("location").value.trim();
-      const statusVal = document.getElementById("status").value;
-      const noteVal = document.getElementById("note").value.trim();
+      const obj = {};
+      for (const col of COLUMNS){
+        const el = document.getElementById("f_" + col.key);
+        if (!el) continue;
+        let v = el.value;
+        if (col.type === "number") v = Number(v || 0) || 0;
+        if (col.required && (!v && v !== 0)) return alert("Täida: " + (col.label || col.key));
+        obj[col.key] = v;
+      }
 
       try {
-        await addItemToDB({
-          name,
-          qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
-          location: locationVal,
-          status: statusVal,
-          note: noteVal
-        });
-
+        await addItemToDB(obj);
         form.reset();
-        document.getElementById("qty").value = 1;
-        document.getElementById("status").value = "Laos";
-
         await renderList();
-      } catch (err) {
-        alert("Lisamine ebaõnnestus: " + (err?.message ?? err));
+      } catch (e2) {
+        alert("Lisamine ebaõnnestus: " + (e2?.message ?? e2));
       }
     });
 
-    search?.addEventListener("input", () => renderList());
-    refreshBtn?.addEventListener("click", () => renderList());
+    search.addEventListener("input", () => renderList());
+    refreshBtn.addEventListener("click", () => renderList());
 
-    exportXlsxBtn?.addEventListener("click", exportExcel);
-
-    importXlsxBtn?.addEventListener("click", () => {
+    exportXlsxBtn.addEventListener("click", exportExcel);
+    importXlsxBtn.addEventListener("click", () => {
       if (!IS_ADMIN) return alert("Impordiks pead olema admin režiimis.");
       xlsxFile.value = "";
       xlsxFile.click();
     });
-
-    xlsxFile?.addEventListener("change", async () => {
+    xlsxFile.addEventListener("change", async () => {
       const f = xlsxFile.files?.[0];
       if (!f) return;
       await importExcelFile(f);
     });
 
-    // ====== init ======
-    (async function init() {
+    // ===== init =====
+    (async function init(){
       updateAdminUI();
+      try {
+        await loadConfig();
+      } catch (e) {
+        showError("Config viga: " + (e?.message ?? e));
+        // fallback minimal
+        COLUMNS = [{key:"name",label:"Nimi",type:"text",required:true}];
+      }
+      renderColumnsUI();
 
       const params = new URLSearchParams(location.search);
       const id = params.get("id");
-
-      if (id) {
-        await renderDetail(id);
-      } else {
-        detailView.style.display = "none";
-        mainApp.style.display = "block";
-        await renderList();
-      }
+      if (id) await renderDetail(id);
+      else await renderList();
     })();
   </script>
 </body>
